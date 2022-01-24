@@ -6,7 +6,7 @@ from bson.binary import Binary
 from datetime import datetime
 from uuid import UUID
 from typing import List
-from model import PostRequestParams, Post, Tag, Platform, DataSource, PostRequestParamsAggregated, Annotations, TextForAnnotation
+from model import PostRequestParams, Post, RequestAnnotations, PostRequestParamsAggregated, Annotations, TextForAnnotation
 
 
 from fastapi import FastAPI
@@ -158,14 +158,16 @@ async def posts(id: UUID) -> Post:
     return post
 
 
-@app.get("/save_and_next", response_description="Save the annotations for the text and return new text for annotation", response_model=TextForAnnotation)
-async def save_and_next(post_annotations: Annotations) -> TextForAnnotation:
+@app.post("/save_and_next", response_description="Save the annotations for the text and return new text for annotation", response_model=TextForAnnotation)
+async def save_and_next(request_annotations: RequestAnnotations) -> TextForAnnotation:
     await mongo([Annotations, TextForAnnotation])
     
-    await post_annotations.insert()
+    annotations = Annotations(text_id = request_annotations.text_id, user_mail = request_annotations.user_mail, annotations = request_annotations.annotations)
+
+    await annotations.insert()
 
     already_annotated = await Annotations.aggregate([
-        {"$match": { "user_mail": { "$eq": post_annotations.user_mail }}}
+        {"$match": { "user_mail": { "$eq": 'djanezashvili@gmail.com' }}}
     ]).to_list()
     annotated_text_ids = [annotations["text_id"]  for annotations in already_annotated]
 
@@ -196,7 +198,8 @@ async def save_and_next(post_annotations: Annotations) -> TextForAnnotation:
         {"$unwind": "$text"},
     ]).to_list()
 
-    return text_for_annotation[0]
+    text_for_annotation = TextForAnnotation(id=text_for_annotation[0]["_id"], post_id = text_for_annotation[0]["text"]["post_id"], words=text_for_annotation[0]["text"]["words"])
+    return text_for_annotation
 
 
 # curl -X 'GET' \

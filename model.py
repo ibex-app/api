@@ -168,6 +168,11 @@ class Annotation(BaseModel):
     relation: Optional[str]
     labelGrup: str
 
+class RequestAnnotations(BaseModel):
+    text_id: UUID
+    user_mail: str
+    annotations: Optional[List[Annotation]]
+
 class Annotations(Document):
     id: UUID = Field(default_factory=uuid4, alias='_id')
     text_id: UUID
