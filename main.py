@@ -6,7 +6,7 @@ from bson.binary import Binary
 from datetime import datetime
 from uuid import UUID
 from typing import List
-from model import PostRequestParams, Post, Tag, Platform, DataSource, PostRequestParamsAggregated
+from model import PostRequestParams, Post, Tag, Platform, DataSource, PostRequestParamsAggregated, Annotations, TextForAnnotation
 
 
 from fastapi import FastAPI
@@ -158,19 +158,45 @@ async def posts(id: UUID) -> Post:
     return post
 
 
+@app.get("/save_and_next", response_description="Save the annotations for the text and return new text for annotation", response_model=TextForAnnotation)
+async def save_and_next(post_annotations: Annotations) -> TextForAnnotation:
+    await mongo([Annotations, TextForAnnotation])
+    
+    await post_annotations.insert()
 
-# def save_and_next_post(post_id: str, user_id: str, annotations: list[str]) -> Post:
-#     db_post:Post = Post()
-#     db_post.uuid = post_id
+    already_annotated = await Annotations.aggregate([
+        {"$match": { "user_mail": { "$eq": post_annotations.user_mail }}}
+    ]).to_list()
+    annotated_text_ids = [annotations["text_id"]  for annotations in already_annotated]
 
-#     db_post.annotations = annotations
+    text_for_annotation = await TextForAnnotation.aggregate([
+        {"$match": { "_id": { "$nin": annotated_text_ids }}},
+        {
+            "$lookup":
+                {
+                    "from": "annotations",
+                    "localField": "_id",
+                    "foreignField": "text_id",
+                    "as": "annotations_"
+                }
+        }, 
+        {"$unwind": "$annotations_"},
+        {"$group" : {"_id":"$_id", "count":{"$sum":1}}},
+        {"$match": { "count": { "$lt": 4 }}},
+        {"$sample": {"size": 1}},
+        {
+            "$lookup":
+                {
+                    "from": "text_for_annotation",
+                    "localField": "_id",
+                    "foreignField": "_id",
+                    "as": "text"
+                }
+        },
+        {"$unwind": "$text"},
+    ]).to_list()
 
-#     next_post:Post = Post()
-
-#     user_id not in next_post.annotators 
-#     len(next_post.annotators) < 4
-
-#     return next_post
+    return text_for_annotation[0]
 
 
 # curl -X 'GET' \
