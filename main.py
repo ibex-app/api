@@ -8,6 +8,8 @@ from uuid import UUID
 from typing import List
 from model import PostRequestParams, Post, RequestAnnotations, PostRequestParamsAggregated, Annotations, TextForAnnotation
 
+from bson import json_util
+import json 
 
 from fastapi import FastAPI
 from fastapi.responses import JSONResponse
@@ -60,6 +62,10 @@ async def mongo(classes):
     client = motor.motor_asyncio.AsyncIOMotorClient(mongodb_connection_string)
     await init_beanie(database=client.ibex, document_models=classes)
 
+def json_responce(result):
+    json_result = json.loads(json_util.dumps(result))
+    return JSONResponse(content=jsonable_encoder(json_result), status_code=200)
+
 
 @app.post("/posts", response_description="Get list of posts", response_model=List[Post])
 async def posts(post_request_params: PostRequestParams) -> List[Post]:
@@ -101,7 +107,14 @@ async def posts(post_request_params: PostRequestParams) -> List[Post]:
             },
         ])\
         .to_list()
-    return JSONResponse(content=jsonable_encoder(result), status_code=200)
+
+    for result_ in result:
+        result_['api_dump'] = ''
+        # for result_key in result_.keys():
+        #     if type(result_[result_key]) == float:
+        #         result_[result_key] = 'NN'
+        
+    return json_responce(result)
 
 
 @app.post("/posts_aggregated", response_description="Get aggregated data for posts")#, response_model=List[Post])
@@ -147,7 +160,7 @@ async def posts_aggregated(post_request_params_aggregated: PostRequestParamsAggr
         ])\
         .to_list()
 
-    return JSONResponse(content=jsonable_encoder(result), status_code=200)
+    return json_responce(result)
 
 
 @app.get("/post/{id}", response_description="Get post details", response_model=List[Post])
