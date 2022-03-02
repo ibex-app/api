@@ -1,3 +1,4 @@
+from turtle import st
 from beanie import init_beanie
 import motor
 
@@ -8,7 +9,10 @@ from uuid import UUID
 from typing import List
 from model import PostRequestParams, Post, RequestAnnotations, PostRequestParamsAggregated, Annotations, TextForAnnotation
 
-from bson import json_util
+from bson import json_util, ObjectId
+from bson.json_util import dumps, loads
+from pydantic import Field, BaseModel, validator
+
 import json 
 
 from fastapi import FastAPI
@@ -105,6 +109,14 @@ async def posts(post_request_params: PostRequestParams) -> List[Post]:
                         'as': "labels.persons"
                     }
             },
+            {
+                '$lookup': {
+                    'from': "data_sources",
+                    'localField': f"data_source_id",
+                    'foreignField': "_id",
+                    'as': "data_source"
+                }
+            },
         ])\
         .to_list()
 
@@ -162,13 +174,17 @@ async def posts_aggregated(post_request_params_aggregated: PostRequestParamsAggr
 
     return json_responce(result)
 
+class PostRequestParamsSinge(BaseModel):
+    id: str
 
-@app.get("/post/{id}", response_description="Get post details", response_model=List[Post])
-async def posts(id: UUID) -> Post:
+@app.post("/post", response_description="Get post details")
+async def post(postRequestParamsSinge: PostRequestParamsSinge) -> Post:
     await mongo([Post])
-    
-    post = await Post.find_one(Post.id == Binary(id.bytes, 3))
-    return post
+    id_ = loads(f'{{"$oid":"{postRequestParamsSinge.id}"}}')
+
+    post = await Post.find_one(Post.id == id_)
+    post.api_dump = {}
+    return json_responce(post)
 
 
 @app.post("/save_and_next", response_description="Save the annotations for the text and return new text for annotation", response_model=TextForAnnotation)
