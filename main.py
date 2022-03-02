@@ -7,7 +7,7 @@ from bson.binary import Binary
 from datetime import datetime
 from uuid import UUID
 from typing import List
-from model import PostRequestParams, Post, RequestAnnotations, PostRequestParamsAggregated, Annotations, TextForAnnotation
+from ibex_models import PostRequestParams, Post, RequestAnnotations, PostRequestParamsAggregated, Annotations, TextForAnnotation
 
 from bson import json_util, ObjectId
 from bson.json_util import dumps, loads
