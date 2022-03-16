@@ -7,7 +7,7 @@ from bson.binary import Binary
 from datetime import datetime
 from uuid import UUID
 from typing import List
-from model import PostRequestParams, Post, RequestAnnotations, PostRequestParamsAggregated, Annotations, TextForAnnotation
+from ibex_models import PostRequestParams, Post, RequestAnnotations, PostRequestParamsAggregated, Annotations, TextForAnnotation
 
 from bson import json_util, ObjectId
 from bson.json_util import dumps, loads
@@ -147,7 +147,7 @@ async def posts_aggregated(post_request_params_aggregated: PostRequestParamsAggr
         if post_request_params_aggregated.days == 30:
             aggregation["month"] = { "$month": "$created_at" }
         if post_request_params_aggregated.days == 7:
-            aggregation["week"] = { "$weekOfYear": "$created_at" }
+            aggregation["week"] = { "$week": "$created_at" }
         if post_request_params_aggregated.days == 1:
             aggregation["day"] = { "$dayOfYear": "$created_at" }
         
