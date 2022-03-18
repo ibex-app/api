@@ -7,7 +7,8 @@ from bson.binary import Binary
 from datetime import datetime
 from uuid import UUID
 from typing import List
-from ibex_models import PostRequestParams, Post, RequestAnnotations, PostRequestParamsAggregated, Annotations, TextForAnnotation
+from ibex_models import  Post, Annotations, TextForAnnotation
+from model import PostRequestParams, RequestAnnotations, PostRequestParamsAggregated
 
 from bson import json_util, ObjectId
 from bson.json_util import dumps, loads
@@ -44,20 +45,23 @@ def generate_search_criteria(post_request_params: PostRequestParams):
     if bool(post_request_params.post_contains):
         search_criteria['text'] = { '$regex': post_request_params.post_contains }
 
-    if len(post_request_params.platforms) > 0:
-        search_criteria['platform'] = { '$in': post_request_params.platforms }
+    if len(post_request_params.platform) > 0:
+        search_criteria['platform'] = { '$in': post_request_params.platform }
 
     if len(post_request_params.data_sources) > 0:
         search_criteria['data_source_id'] = { '$in': [Binary(i.bytes, 3) for i in post_request_params.data_sources] }
 
+    if len(post_request_params.author_platform_id) > 0:
+        search_criteria['author_platform_id'] = { '$in': post_request_params.author_platform_id }
+    
     if len(post_request_params.topics) > 0:
-        search_criteria['labels.topics'] = { '$in': [Binary(i.bytes, 3) for i in post_request_params.topics] }
+        search_criteria['labels.topics'] = { '$in': [UUID(i) for i in post_request_params.topics] }
     
     if len(post_request_params.persons) > 0:
-        search_criteria['labels.persons'] = { '$in': [Binary(i.bytes, 3) for i in post_request_params.persons] }
+        search_criteria['labels.persons'] = { '$in': [UUID(i) for i in post_request_params.persons] }
 
     if len(post_request_params.locations) > 0:
-        search_criteria['labels.locations'] = { '$in': [Binary(i.bytes, 3) for i in post_request_params.locations] }
+        search_criteria['labels.locations'] = { '$in': [UUID(i) for i in post_request_params.locations] }
 
     return search_criteria
 
@@ -79,6 +83,7 @@ async def posts(post_request_params: PostRequestParams) -> List[Post]:
 
     result = await Post.find(search_criteria)\
         .aggregate([
+            {   '$sort': { 'created_at': -1 }},
             {
                 '$skip': post_request_params.start_index
             },
@@ -130,18 +135,22 @@ async def posts(post_request_params: PostRequestParams) -> List[Post]:
 
 
 @app.post("/posts_aggregated", response_description="Get aggregated data for posts")#, response_model=List[Post])
-async def posts_aggregated(post_request_params_aggregated: PostRequestParamsAggregated) -> List[Post]:
-
+async def posts_aggregated(post_request_params_aggregated: PostRequestParamsAggregated):
+    
     await mongo([Post])
     
     search_criteria = generate_search_criteria(post_request_params_aggregated.post_request_params)
     
+    axisX = f"${post_request_params_aggregated.axisX}" \
+        if post_request_params_aggregated.axisX in ['platform', 'author_platform_id'] \
+        else f"$labels.{post_request_params_aggregated.axisX}" 
+
     aggregation = {}
     if post_request_params_aggregated.days is None:
-        aggregation = f"$labels.{post_request_params_aggregated.axisX}"
+        aggregation = axisX
     else:
         aggregation = {
-            "label": f"$labels.{post_request_params_aggregated.axisX}",
+            "label": axisX,
             "year": { "$year": "$created_at" },
         }
         if post_request_params_aggregated.days == 30:
@@ -150,25 +159,43 @@ async def posts_aggregated(post_request_params_aggregated: PostRequestParamsAggr
             aggregation["week"] = { "$week": "$created_at" }
         if post_request_params_aggregated.days == 1:
             aggregation["day"] = { "$dayOfYear": "$created_at" }
-        
-        
-    result = await Post.find(search_criteria)\
-        .aggregate([
-            {'$unwind':f"$labels.{post_request_params_aggregated.axisX}" },
-            {'$group':{
-                '_id': aggregation , 
-                'count': {'$sum':1} 
-                } 
-            },
-            {
+    
+    aggregations = []    
+    if post_request_params_aggregated.axisX not in ['platform', 'author_platform_id']:
+        aggregations.append({'$unwind':axisX })
+
+    group = {'$group': {
+        '_id': aggregation , 
+        'count': {'$sum':1}
+        } 
+    }
+
+    aggregations.append({'$group': {
+        '_id': aggregation , 
+        'count': {'$sum':1}
+        } 
+    })
+    
+    if post_request_params_aggregated.axisX not in ['platform', 'author_platform_id']:
+        aggregations.append({
                 '$lookup': {
                     'from': "tags",
                     'localField': f"_id{'.label' if post_request_params_aggregated.days is not None else ''}",
                     'foreignField': "_id",
                     'as': f"{post_request_params_aggregated.axisX}"
                 }
-            },
-            {'$unwind': f"${post_request_params_aggregated.axisX}" },
+            })
+        aggregations.append({'$unwind': f"${post_request_params_aggregated.axisX}" })
+    else:
+        set_ = { '$set': {} }
+        set_['$set'][post_request_params_aggregated.axisX] = '$_id'
+        aggregations.append(set_)
+
+    # print(aggregations)
+    # print(search_criteria)
+    result = await Post.find(search_criteria)\
+        .aggregate([
+            *aggregations,
         ])\
         .to_list()
 
@@ -184,7 +211,7 @@ async def post(postRequestParamsSinge: PostRequestParamsSinge) -> Post:
 
     post = await Post.find_one(Post.id == id_)
     post.api_dump = {}
-    return json_responce(post)
+    return JSONResponse(content=jsonable_encoder(post), status_code=200)
 
 
 @app.post("/save_and_next", response_description="Save the annotations for the text and return new text for annotation", response_model=TextForAnnotation)

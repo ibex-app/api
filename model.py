@@ -10,12 +10,13 @@ class PostRequestParams(BaseModel):
     time_interval_from: datetime
     time_interval_to: datetime
     has_video:Optional[bool]
-    platforms: List[Platform] = []
+    platform: List[Platform] = []
     post_contains: Optional[str]
-    data_sources: List[UUID] = []
-    topics: List[UUID] = []
-    persons: List[UUID] = []
-    locations: List[UUID] = []
+    data_sources: List[str] = []
+    author_platform_id: List[str] = []
+    topics: List[str] = []
+    persons: List[str] = []
+    locations: List[str] = []
 
     sort_by: Optional[str]
 
