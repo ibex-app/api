@@ -7,8 +7,9 @@ from bson.binary import Binary
 from datetime import datetime
 from uuid import UUID
 from typing import List
-from ibex_models import  Post, Annotations, TextForAnnotation
-from model import PostRequestParams, RequestAnnotations, PostRequestParamsAggregated
+from ibex_models import  Post, Annotations, TextForAnnotation, Monitor, Platform, Account, SearchTerm, CollectAction
+from model import PostRequestParams, RequestAnnotations, PostRequestParamsAggregated, PostMonitor, TagRequestParams, IdRequestParams
+from beanie.odm.operators.find.comparison import In
 
 from bson import json_util, ObjectId
 from bson.json_util import dumps, loads
@@ -20,6 +21,7 @@ from fastapi import FastAPI
 from fastapi.responses import JSONResponse
 from fastapi.encoders import jsonable_encoder
 from fastapi.middleware.cors import CORSMiddleware
+import os
 
 app = FastAPI()
 
@@ -39,6 +41,9 @@ def generate_search_criteria(post_request_params: PostRequestParams):
         'created_at': { '$gte': post_request_params.time_interval_from, '$lte': post_request_params.time_interval_to},
     }
     
+    if bool(post_request_params.monitor_id):
+        search_criteria['monitor_ids'] = { '$in': [UUID(post_request_params.monitor_id)] }  
+
     if type(post_request_params.has_video) == bool:
         search_criteria['has_video'] = { '$eq': post_request_params.has_video }
 
@@ -48,8 +53,8 @@ def generate_search_criteria(post_request_params: PostRequestParams):
     if len(post_request_params.platform) > 0:
         search_criteria['platform'] = { '$in': post_request_params.platform }
 
-    if len(post_request_params.data_sources) > 0:
-        search_criteria['data_source_id'] = { '$in': [Binary(i.bytes, 3) for i in post_request_params.data_sources] }
+    if len(post_request_params.accounts) > 0:
+        search_criteria['account_id'] = { '$in': [Binary(i.bytes, 3) for i in post_request_params.accounts] }
 
     if len(post_request_params.author_platform_id) > 0:
         search_criteria['author_platform_id'] = { '$in': post_request_params.author_platform_id }
@@ -65,10 +70,12 @@ def generate_search_criteria(post_request_params: PostRequestParams):
 
     return search_criteria
 
+
 async def mongo(classes):
-    mongodb_connection_string = "mongodb+srv://root:Dn9B6czCKU6qFCj@cluster0.iejvr.mongodb.net/ibex?retryWrites=true&w=majority"
+    mongodb_connection_string = os.getenv('MONGO_CS')
     client = motor.motor_asyncio.AsyncIOMotorClient(mongodb_connection_string)
     await init_beanie(database=client.ibex, document_models=classes)
+
 
 def json_responce(result):
     json_result = json.loads(json_util.dumps(result))
@@ -116,10 +123,10 @@ async def posts(post_request_params: PostRequestParams) -> List[Post]:
             },
             {
                 '$lookup': {
-                    'from': "data_sources",
-                    'localField': f"data_source_id",
+                    'from': "accounts",
+                    'localField': f"account_id",
                     'foreignField': "_id",
-                    'as': "data_source"
+                    'as': "account"
                 }
             },
         ])\
@@ -201,17 +208,84 @@ async def posts_aggregated(post_request_params_aggregated: PostRequestParamsAggr
 
     return json_responce(result)
 
-class PostRequestParamsSinge(BaseModel):
-    id: str
 
 @app.post("/post", response_description="Get post details")
-async def post(postRequestParamsSinge: PostRequestParamsSinge) -> Post:
+async def post(postRequestParamsSinge: IdRequestParams) -> Post:
     await mongo([Post])
     id_ = loads(f'{{"$oid":"{postRequestParamsSinge.id}"}}')
 
     post = await Post.find_one(Post.id == id_)
     post.api_dump = {}
     return JSONResponse(content=jsonable_encoder(post), status_code=200)
+
+
+@app.post("/create_monitor", response_description="Create monitor")
+async def create_monitor(postMonitor: PostMonitor) -> Monitor:
+    await mongo([Monitor, Account, SearchTerm, CollectAction])
+
+    monitor = Monitor(
+        title=postMonitor.title, 
+        descr=postMonitor.descr, 
+        collect_actions = [], 
+        date_from=postMonitor.date_from, 
+        date_to=postMonitor.date_to
+    )
+    print(monitor.id, type(monitor.id), type(str(monitor.id)))
+    search_terms = [SearchTerm(
+            term=search_term, 
+            tags=[str(monitor.id)]
+        ) for search_term in postMonitor.search_terms]
+
+    accounts = [Account(
+            title = account.title, 
+            platform = account.platform, 
+            platform_id = account.platform_id, 
+            tags = [str(monitor.id)],
+            url=''
+        ) for account in postMonitor.accounts]
+    
+    platforms = postMonitor.platforms if postMonitor.platforms and len(postMonitor.platforms) else [account.platform for account in postMonitor.accounts]
+    
+    # Create single CollectAction per platform
+    collect_actions = [CollectAction(
+            monitor_id = monitor.id,
+            platform = platform, 
+            search_term_tags = [str(monitor.id)], 
+            account_tags=[str(monitor.id)],
+            tags = [],
+        ) for platform in platforms]
+    
+    monitor.collect_actions = [collect_action.id for collect_action in collect_actions]
+
+    if len(search_terms): await SearchTerm.insert_many(search_terms)
+    if len(accounts): await Account.insert_many(accounts)
+    await CollectAction.insert_many(collect_actions)
+    await monitor.save()
+
+    return monitor
+
+
+@app.post("/collect_sample", response_description="Run sample collection pipeline")
+async def collect_sample(monitor_id: IdRequestParams):
+    # monitor_id.id
+    os.popen(f'/root/data-collection-and-processing/main.py monitor_id={monitor_id.id} --sample=True').read()
+    
+
+@app.post("/get_monitors", response_description="Get monitors")
+async def get_monitors(post_tag: TagRequestParams) -> Monitor:
+    await mongo([Monitor])
+    if post_tag.tag == '*':
+        monitor = await Monitor.find().to_list()
+    else:
+        monitor = await Monitor.find(In(Monitor.tags, post_tag.tag)).to_list()
+
+    return JSONResponse(content=jsonable_encoder(monitor), status_code=200)
+
+
+@app.post("/search_account", response_description="Search accounts by string across all platforms")
+async def search_account(post_tag: TagRequestParams):
+    # post_tag.tag
+    pass
 
 
 @app.post("/save_and_next", response_description="Save the annotations for the text and return new text for annotation", response_model=TextForAnnotation)
@@ -258,15 +332,21 @@ async def save_and_next(request_annotations: RequestAnnotations) -> TextForAnnot
     return text_for_annotation
 
 
-# curl -X 'GET' \
-#   'http://127.0.0.1:8000/posts_aggregated' \
+# curl -X 'POST' \
+#   'http://161.35.73.100:8888/create_monitor' \
 #   -H 'accept: application/json' \
 #   -H 'Content-Type: application/json' \
-#   -d '{
-#   "post_request_params": {
-#     "time_interval_from": "2021-01-16T17:23:05.925Z",
-#     "time_interval_to": "2021-07-16T17:23:05.925Z",
-#   },
-#   "axisX": "topics",
-#   "days": 30
-# }'
+#   -d '{  "title": "Testing Monitor api", "descr": "descr", "date_from": "2022-02-01T00:00:00.000Z", "search_terms": ["ზუგდიდი"], "platforms": ["facebook"], "accounts": [{"title": "title",  "platform_id": "platform_id", "platform": "facebook"}] }'
+
+
+# curl -X 'POST' \
+#   'http://161.35.73.100:8888/get_monitors' \
+#   -H 'accept: application/json' \
+#   -H 'Content-Type: application/json' \
+#   -d '{ "tag": "*"}'
+
+# curl -X 'POST' \
+#   'http://161.35.73.100:8888/collect_sample' \
+#   -H 'accept: application/json' \
+#   -H 'Content-Type: application/json' \
+#   -d '{ "id": "f06a6a87-7fb8-4a53-8c46-90accd89aa8c"}'

@@ -12,11 +12,12 @@ class PostRequestParams(BaseModel):
     has_video:Optional[bool]
     platform: List[Platform] = []
     post_contains: Optional[str]
-    data_sources: List[str] = []
+    accounts: List[str] = []
     author_platform_id: List[str] = []
     topics: List[str] = []
     persons: List[str] = []
     locations: List[str] = []
+    monitor_id: Optional[str]
 
     sort_by: Optional[str]
 
@@ -35,3 +36,23 @@ class RequestAnnotations(BaseModel):
     text_id: UUID
     user_mail: str
     annotations: Optional[List[Annotation]]
+
+class IdRequestParams(BaseModel):
+    id: str
+
+class TagRequestParams(BaseModel):
+    tag: str
+
+class AccountReques(BaseModel):
+    title: str
+    platform: Platform
+    platform_id: str
+
+class PostMonitor(BaseModel):
+    title: str
+    descr: str
+    date_from: datetime
+    date_to: Optional[datetime]
+    search_terms: List[str]
+    accounts: List[AccountReques]
+    platforms: Optional[List[Platform]]
