@@ -7,8 +7,8 @@ from bson.binary import Binary
 from datetime import datetime
 from uuid import UUID
 from typing import List
-from ibex_models import  Post, Annotations, TextForAnnotation, Monitor, Platform, Account, SearchTerm, CollectAction
-from model import PostRequestParams, RequestAnnotations, PostRequestParamsAggregated, PostMonitor, TagRequestParams, IdRequestParams
+from ibex_models import  Post, Annotations, TextForAnnotation, Monitor, Platform, Account, SearchTerm, CollectAction, CollectTask
+from model import PostRequestParams, RequestAnnotations, PostRequestParamsAggregated, PostMonitor, TagRequestParams, IdRequestParams, SearchAccountsRequest
 from beanie.odm.operators.find.comparison import In
 
 from bson import json_util, ObjectId
@@ -230,7 +230,7 @@ async def create_monitor(postMonitor: PostMonitor) -> Monitor:
         date_from=postMonitor.date_from, 
         date_to=postMonitor.date_to
     )
-    print(monitor.id, type(monitor.id), type(str(monitor.id)))
+    # print(monitor.id, type(monitor.id), type(str(monitor.id)))
     search_terms = [SearchTerm(
             term=search_term, 
             tags=[str(monitor.id)]
@@ -283,10 +283,18 @@ async def get_monitors(post_tag: TagRequestParams) -> Monitor:
 
 
 @app.post("/search_account", response_description="Search accounts by string across all platforms")
-async def search_account(post_tag: TagRequestParams):
+async def search_account(search_accounts: SearchAccountsRequest):
     # post_tag.tag
     pass
 
+@app.post("/get_hits_count", response_description="Get hits count for monitor")
+async def search_account(monitor_id: IdRequestParams):
+    await mongo([CollectTask])
+    hits_count = {}
+    collect_tasks = await CollectTask.find(CollectTask.monitor_id == UUID(monitor_id.id)).to_list()
+    for platform in Platform:
+        hits_count[platform] = sum([collect_task.hits_count for collect_task in collect_tasks if collect_tasks.platform == platform])
+    return hits_count
 
 @app.post("/save_and_next", response_description="Save the annotations for the text and return new text for annotation", response_model=TextForAnnotation)
 async def save_and_next(request_annotations: RequestAnnotations) -> TextForAnnotation:
