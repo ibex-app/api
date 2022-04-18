@@ -43,6 +43,10 @@ class IdRequestParams(BaseModel):
 class TagRequestParams(BaseModel):
     tag: str
 
+class SearchAccountsRequest(BaseModel):
+    substring: str
+    platforms: List[Platform]
+
 class AccountReques(BaseModel):
     title: str
     platform: Platform
