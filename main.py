@@ -7,7 +7,7 @@ from bson.binary import Binary
 from datetime import datetime
 from uuid import UUID
 from typing import List
-from ibex_models import  Post, Annotations, TextForAnnotation, Monitor, Platform, Account, SearchTerm, CollectAction
+from ibex_models import  Post, Annotations, TextForAnnotation, Monitor, Platform, Account, SearchTerm, CollectAction, CollectTask
 from model import PostRequestParams, RequestAnnotations, PostRequestParamsAggregated, PostMonitor, TagRequestParams, IdRequestParams
 from beanie.odm.operators.find.comparison import In
 
@@ -17,11 +17,39 @@ from pydantic import Field, BaseModel, validator
 
 import json 
 
-from fastapi import FastAPI
-from fastapi.responses import JSONResponse
+from fastapi import FastAPI, Request, Depends
+from fastapi.responses import JSONResponse, RedirectResponse
 from fastapi.encoders import jsonable_encoder
 from fastapi.middleware.cors import CORSMiddleware
 import os
+
+from starlette.middleware.sessions import SessionMiddleware
+from authlib.integrations.starlette_client import OAuthError
+from jwt_ import create_refresh_token
+from jwt_ import create_token
+from jwt_ import CREDENTIALS_EXCEPTION
+from jwt_ import get_current_user_email
+
+from authlib.integrations.starlette_client import OAuth
+from starlette.config import Config
+
+# OAuth settings
+GOOGLE_CLIENT_ID = os.environ.get('GOOGLE_CLIENT_ID') or None
+GOOGLE_CLIENT_SECRET = os.environ.get('GOOGLE_CLIENT_SECRET') or None
+
+if GOOGLE_CLIENT_ID is None or GOOGLE_CLIENT_SECRET is None:
+    raise BaseException('Missing env variables')
+
+# Set up OAuth
+config_data = {'GOOGLE_CLIENT_ID': GOOGLE_CLIENT_ID, 'GOOGLE_CLIENT_SECRET': GOOGLE_CLIENT_SECRET}
+starlette_config = Config(environ=config_data)
+oauth = OAuth(starlette_config)
+oauth.register(
+    name='google',
+    server_metadata_url='https://accounts.google.com/.well-known/openid-configuration',
+    client_kwargs={'scope': 'openid email profile'},
+)
+
 
 app = FastAPI()
 
@@ -34,6 +62,8 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+    
+app.add_middleware(SessionMiddleware, secret_key='SECRET_KEY')
 
 # @staticmethod
 def generate_search_criteria(post_request_params: PostRequestParams):
@@ -83,7 +113,7 @@ def json_responce(result):
 
 
 @app.post("/posts", response_description="Get list of posts", response_model=List[Post])
-async def posts(post_request_params: PostRequestParams) -> List[Post]:
+async def posts(post_request_params: PostRequestParams, current_email: str = Depends(get_current_user_email)) -> List[Post]:
     await mongo([Post])
     
     search_criteria = generate_search_criteria(post_request_params)
@@ -142,7 +172,7 @@ async def posts(post_request_params: PostRequestParams) -> List[Post]:
 
 
 @app.post("/posts_aggregated", response_description="Get aggregated data for posts")#, response_model=List[Post])
-async def posts_aggregated(post_request_params_aggregated: PostRequestParamsAggregated):
+async def posts_aggregated(post_request_params_aggregated: PostRequestParamsAggregated, current_email: str = Depends(get_current_user_email)):
     
     await mongo([Post])
     
@@ -210,7 +240,7 @@ async def posts_aggregated(post_request_params_aggregated: PostRequestParamsAggr
 
 
 @app.post("/post", response_description="Get post details")
-async def post(postRequestParamsSinge: IdRequestParams) -> Post:
+async def post(postRequestParamsSinge: IdRequestParams, current_email: str = Depends(get_current_user_email)) -> Post:
     await mongo([Post])
     id_ = loads(f'{{"$oid":"{postRequestParamsSinge.id}"}}')
 
@@ -220,7 +250,7 @@ async def post(postRequestParamsSinge: IdRequestParams) -> Post:
 
 
 @app.post("/create_monitor", response_description="Create monitor")
-async def create_monitor(postMonitor: PostMonitor) -> Monitor:
+async def create_monitor(postMonitor: PostMonitor, current_email: str = Depends(get_current_user_email)) -> Monitor:
     await mongo([Monitor, Account, SearchTerm, CollectAction])
 
     monitor = Monitor(
@@ -265,14 +295,31 @@ async def create_monitor(postMonitor: PostMonitor) -> Monitor:
     return monitor
 
 
+@app.post("/update_monitor", response_description="Create monitor")
+async def update_monitor(monitor_: Monitor, current_email: str = Depends(get_current_user_email)) -> Monitor:
+    monitor = await Monitor.get(monitor_.id)
+    for key, value in monitor_.__dict__:
+        monitor[key] = value
+    await monitor.save()
+
 @app.post("/collect_sample", response_description="Run sample collection pipeline")
-async def collect_sample(monitor_id: IdRequestParams):
+async def collect_sample(monitor_id: IdRequestParams, current_email: str = Depends(get_current_user_email)):
+    print(22222, monitor_id)
     # monitor_id.id
-    os.popen(f'/root/data-collection-and-processing/main.py monitor_id={monitor_id.id} --sample=True').read()
+    os.popen(f'python3 /root/data-collection-and-processing/main.py --monitor_id={monitor_id.id} --sample=True').read()
+
+
+@app.post("/get_hits_count", response_description="Get amount of post for monitor")
+async def post(postRequestParamsSinge: IdRequestParams, current_email: str = Depends(get_current_user_email)):
+    collect_tasks = await CollectTask.find(CollectTask.monitor_id == UUID(postRequestParamsSinge.id)).to_list()
+    counts = {} 
+    for platform in Platform:
+        counts[platform] = sum([collect_task.hits_count for collect_task in collect_tasks if collect_task.platform == platform])
+    return JSONResponse(content=jsonable_encoder(counts), status_code=200)
     
 
 @app.post("/get_monitors", response_description="Get monitors")
-async def get_monitors(post_tag: TagRequestParams) -> Monitor:
+async def get_monitors(post_tag: TagRequestParams, current_email: str = Depends(get_current_user_email)) -> Monitor:
     await mongo([Monitor])
     if post_tag.tag == '*':
         monitor = await Monitor.find().to_list()
@@ -283,7 +330,7 @@ async def get_monitors(post_tag: TagRequestParams) -> Monitor:
 
 
 @app.post("/search_account", response_description="Search accounts by string across all platforms")
-async def search_account(post_tag: TagRequestParams):
+async def search_account(post_tag: TagRequestParams, current_email: str = Depends(get_current_user_email)):
     # post_tag.tag
     pass
 
@@ -331,6 +378,36 @@ async def save_and_next(request_annotations: RequestAnnotations) -> TextForAnnot
     text_for_annotation = TextForAnnotation(id=text_for_annotation[0]["_id"], post_id = text_for_annotation[0]["text"]["post_id"], words=text_for_annotation[0]["text"]["words"])
     return text_for_annotation
 
+@app.get('/login')
+async def login(request: Request):
+    env = 'dev' if 'localhost' in request.headers['referer'] else 'prod'
+    redirect_uri = f'https://ibex-app.com/token?env={env}'
+    redirect = await oauth.google.authorize_redirect(request, redirect_uri)
+    return redirect
+
+
+@app.route('/token')
+async def auth(request: Request):
+    try:
+        access_token = await oauth.google.authorize_access_token(request)
+    except OAuthError as err:
+        print(str(err))
+        raise CREDENTIALS_EXCEPTION
+
+    user_data = await oauth.google.parse_id_token(access_token, access_token['userinfo']['nonce'])
+
+    if user_data['email'] in ['djanezashvili@gmail.com', 'naroushvili.d@gmail.com', 'klachashvili@gmail.com', 'nikamamuladze97@gmail.com', 'ninako.chokheli@gmail.com', 'likakhutsiberidze@gmail.com', 'mariamtsitsikashvili@gmail.com']:
+        obj_ = {
+            'result': True,
+            'access_token': create_token(user_data['email']).decode("utf-8") ,
+            'refresh_token': create_refresh_token(user_data['email']).decode("utf-8") ,
+        }
+        return_url = 'http://localhost:3000/frontend' if request.query_params['env'] == 'dev' else 'https://ibex-app.github.io/frontend'
+        return RedirectResponse(url=f"{return_url}?access_token={obj_['access_token']}&user={user_data['email']}")
+
+    raise CREDENTIALS_EXCEPTION
+
+# create_monitor, update_monitor, get_monitors, collect_sample, get_hits_count, search_account
 
 # curl -X 'POST' \
 #   'http://161.35.73.100:8888/create_monitor' \

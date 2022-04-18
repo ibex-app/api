@@ -56,3 +56,4 @@ class PostMonitor(BaseModel):
     search_terms: List[str]
     accounts: List[AccountReques]
     platforms: Optional[List[Platform]]
+    languages: Optional[List[str]]
