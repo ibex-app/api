@@ -22,6 +22,7 @@ from fastapi.responses import JSONResponse, RedirectResponse
 from fastapi.encoders import jsonable_encoder
 from fastapi.middleware.cors import CORSMiddleware
 import os
+import subprocess
 
 from starlette.middleware.sessions import SessionMiddleware
 from authlib.integrations.starlette_client import OAuthError
@@ -302,19 +303,22 @@ async def update_monitor(monitor_: Monitor, current_email: str = Depends(get_cur
         monitor[key] = value
     await monitor.save()
 
+
 @app.post("/collect_sample", response_description="Run sample collection pipeline")
 async def collect_sample(monitor_id: IdRequestParams, current_email: str = Depends(get_current_user_email)):
-    print(22222, monitor_id)
-    # monitor_id.id
-    os.popen(f'python3 /root/data-collection-and-processing/main.py --monitor_id={monitor_id.id} --sample=True').read()
-
+    cmd = f'python3 /root/data-collection-and-processing/main.py --monitor_id={monitor_id.id} --sample=True >> api.out'
+    # subprocess.Popen(cmd, stdout=None, stderr=None, stdin=None, close_fds=True)
+    os.popen(cmd).read()
 
 @app.post("/get_hits_count", response_description="Get amount of post for monitor")
 async def post(postRequestParamsSinge: IdRequestParams, current_email: str = Depends(get_current_user_email)):
+    await mongo([CollectTask])
+
     collect_tasks = await CollectTask.find(CollectTask.monitor_id == UUID(postRequestParamsSinge.id)).to_list()
     counts = {} 
     for platform in Platform:
-        counts[platform] = sum([collect_task.hits_count for collect_task in collect_tasks if collect_task.platform == platform])
+        counts[platform] = sum([collect_task.hits_count or 0 for collect_task in collect_tasks if collect_task.platform == platform])
+
     return JSONResponse(content=jsonable_encoder(counts), status_code=200)
     
 
@@ -404,7 +408,7 @@ async def auth(request: Request):
 
     user_data = await oauth.google.parse_id_token(access_token, access_token['userinfo']['nonce'])
 
-    if user_data['email'] in ['djanezashvili@gmail.com', 'naroushvili.d@gmail.com', 'klachashvili@gmail.com', 'nikamamuladze97@gmail.com', 'ninako.chokheli@gmail.com', 'likakhutsiberidze@gmail.com', 'mariamtsitsikashvili@gmail.com']:
+    if user_data['email'] in ['alexisadams@gmail.com', 'edekeulenaar@gmail.com', 'djanezashvili@gmail.com', 'naroushvili.d@gmail.com', 'klachashvili@gmail.com', 'nikamamuladze97@gmail.com', 'ninako.chokheli@gmail.com', 'likakhutsiberidze@gmail.com', 'mariamtsitsikashvili@gmail.com']:
         obj_ = {
             'result': True,
             'access_token': create_token(user_data['email']).decode("utf-8") ,
