@@ -307,20 +307,38 @@ async def update_monitor(monitor_: Monitor, current_email: str = Depends(get_cur
 @app.post("/collect_sample", response_description="Run sample collection pipeline")
 async def collect_sample(monitor_id: IdRequestParams, current_email: str = Depends(get_current_user_email)):
     cmd = f'python3 /root/data-collection-and-processing/main.py --monitor_id={monitor_id.id} --sample=True >> api.out'
-    # subprocess.Popen(cmd, stdout=None, stderr=None, stdin=None, close_fds=True)
-    os.popen(cmd).read()
+    subprocess.Popen(cmd, stdout=None, stderr=None, stdin=None, close_fds=True, shell=True)
+    # os.popen(cmd).read()
+
 
 @app.post("/get_hits_count", response_description="Get amount of post for monitor")
-async def post(postRequestParamsSinge: IdRequestParams, current_email: str = Depends(get_current_user_email)):
+async def get_hits_count(postRequestParamsSinge: IdRequestParams, current_email: str = Depends(get_current_user_email)):
     await mongo([CollectTask])
 
     collect_tasks = await CollectTask.find(CollectTask.monitor_id == UUID(postRequestParamsSinge.id)).to_list()
-    counts = {} 
-    for platform in Platform:
-        counts[platform] = sum([collect_task.hits_count or 0 for collect_task in collect_tasks if collect_task.platform == platform])
+    # counts = {} 
+    # for platform in Platform:
+    #     counts[platform] = sum([collect_task.hits_count or 0 for collect_task in collect_tasks if collect_task.platform == platform])
+    from itertools import groupby
+    getTerm = lambda collect_task: collect_task.search_terms[0].term
 
-    return JSONResponse(content=jsonable_encoder(counts), status_code=200)
+
+    terms_with_counts = {}
+    for _name, _list in groupby(sorted(collect_tasks, key=getTerm), key=getTerm):
+        terms_with_counts[_name] = {}
+        for item in _list:
+            terms_with_counts[_name][item.platform] = item.hits_count
+    return JSONResponse(content=jsonable_encoder(terms_with_counts), status_code=200)
+
     
+@app.post("/get_monitor", response_description="Get monitor")
+async def search_account(monitor_id: IdRequestParams, current_email: str = Depends(get_current_user_email)):
+    await mongo([Monitor, SearchTerm, Account])
+    monitor = await Monitor.get(monitor_id.id)
+    search_terms = await SearchTerm.find(In(SearchTerm.tags, [monitor_id.id])).to_list()
+    accounts = await Account.find(In(SearchTerm.tags, [monitor_id.id])).to_list()
+    return { 'monitor': monitor, 'search_terms': search_terms, 'accounts': accounts }
+
 
 @app.post("/get_monitors", response_description="Get monitors")
 async def get_monitors(post_tag: TagRequestParams, current_email: str = Depends(get_current_user_email)) -> Monitor:
@@ -338,14 +356,6 @@ async def search_account(search_accounts: SearchAccountsRequest, current_email: 
     # post_tag.tag
     pass
 
-@app.post("/get_hits_count", response_description="Get hits count for monitor")
-async def search_account(monitor_id: IdRequestParams):
-    await mongo([CollectTask])
-    hits_count = {}
-    collect_tasks = await CollectTask.find(CollectTask.monitor_id == UUID(monitor_id.id)).to_list()
-    for platform in Platform:
-        hits_count[platform] = sum([collect_task.hits_count for collect_task in collect_tasks if collect_tasks.platform == platform])
-    return hits_count
 
 @app.post("/save_and_next", response_description="Save the annotations for the text and return new text for annotation", response_model=TextForAnnotation)
 async def save_and_next(request_annotations: RequestAnnotations) -> TextForAnnotation:
@@ -390,10 +400,11 @@ async def save_and_next(request_annotations: RequestAnnotations) -> TextForAnnot
     text_for_annotation = TextForAnnotation(id=text_for_annotation[0]["_id"], post_id = text_for_annotation[0]["text"]["post_id"], words=text_for_annotation[0]["text"]["words"])
     return text_for_annotation
 
+
 @app.get('/login')
 async def login(request: Request):
     env = 'dev' if 'localhost' in request.headers['referer'] else 'prod'
-    redirect_uri = f'https://ibex-app.com/token?env={env}'
+    redirect_uri = f'https://ibex-app.com/api/token?env={env}'
     redirect = await oauth.google.authorize_redirect(request, redirect_uri)
     return redirect
 
@@ -414,7 +425,7 @@ async def auth(request: Request):
             'access_token': create_token(user_data['email']).decode("utf-8") ,
             'refresh_token': create_refresh_token(user_data['email']).decode("utf-8") ,
         }
-        return_url = 'http://localhost:3000/frontend' if request.query_params['env'] == 'dev' else 'https://ibex-app.github.io/frontend'
+        return_url = 'http://localhost:3000' if request.query_params['env'] == 'dev' else 'https://ibex-app.com'
         return RedirectResponse(url=f"{return_url}?access_token={obj_['access_token']}&user={user_data['email']}")
 
     raise CREDENTIALS_EXCEPTION
