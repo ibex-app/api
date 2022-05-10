@@ -404,13 +404,21 @@ async def save_and_next(request_annotations: RequestAnnotations) -> TextForAnnot
 @app.get('/login')
 async def login(request: Request):
     env = 'dev' if 'localhost' in request.headers['referer'] else 'prod'
-    redirect_uri = f'https://ibex-app.com/api/token?env={env}'
+    host = request.headers['referer'].rstrip('login')
+    redirect_uri = f'{host}api/token?env={env}'
+    print(888, redirect_uri)
     redirect = await oauth.google.authorize_redirect(request, redirect_uri)
     return redirect
 
 
 @app.route('/token')
 async def auth(request: Request):
+    print(999, request.url._url)
+    print(999, request.url.scheme)
+    print(999, request.url.path)
+    sub_domain = request.url._url.split('.ibex-app.com')[0].split('//')[1]
+    print(101010, sub_domain)
+
     try:
         access_token = await oauth.google.authorize_access_token(request)
     except OAuthError as err:
@@ -419,13 +427,13 @@ async def auth(request: Request):
 
     user_data = await oauth.google.parse_id_token(access_token, access_token['userinfo']['nonce'])
 
-    if user_data['email'] in ['alexisadams@gmail.com', 'edekeulenaar@gmail.com', 'djanezashvili@gmail.com', 'naroushvili.d@gmail.com', 'klachashvili@gmail.com', 'nikamamuladze97@gmail.com', 'ninako.chokheli@gmail.com', 'likakhutsiberidze@gmail.com', 'mariamtsitsikashvili@gmail.com']:
+    if user_data['email'] in ['n.rizhamadze@gmail.com', 'ngvilia123@gmail.com', 'g32.gelashvili@gmail.com', 'alexisadams@gmail.com', 'edekeulenaar@gmail.com', 'djanezashvili@gmail.com', 'naroushvili.d@gmail.com', 'klachashvili@gmail.com', 'nikamamuladze97@gmail.com', 'ninako.chokheli@gmail.com', 'likakhutsiberidze@gmail.com', 'mariamtsitsikashvili@gmail.com']:
         obj_ = {
             'result': True,
             'access_token': create_token(user_data['email']).decode("utf-8") ,
             'refresh_token': create_refresh_token(user_data['email']).decode("utf-8") ,
         }
-        return_url = 'http://localhost:3000' if request.query_params['env'] == 'dev' else 'https://ibex-app.com'
+        return_url = 'http://localhost:3000' if request.query_params['env'] == 'dev' else f'https://{sub_domain}.ibex-app.com'
         return RedirectResponse(url=f"{return_url}?access_token={obj_['access_token']}&user={user_data['email']}")
 
     raise CREDENTIALS_EXCEPTION
