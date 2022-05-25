@@ -69,7 +69,7 @@ app.add_middleware(SessionMiddleware, secret_key='SECRET_KEY')
 # @staticmethod
 def generate_search_criteria(post_request_params: PostRequestParams):
     search_criteria = {
-        'created_at': { '$gte': post_request_params.time_interval_from, '$lte': post_request_params.time_interval_to},
+        # 'created_at': { '$gte': post_request_params.time_interval_from, '$lte': post_request_params.time_interval_to},
     }
     
     if bool(post_request_params.monitor_id):
@@ -103,6 +103,9 @@ def generate_search_criteria(post_request_params: PostRequestParams):
 
 
 async def mongo(classes):
+    # sub_domain = request.url._url.split('.ibex-app.com')[0].split('//')[1]
+    # mongodb_connection_string = os.getenv(f'MONGO_CS_{sub_domain.upper()}')
+
     mongodb_connection_string = os.getenv('MONGO_CS')
     client = motor.motor_asyncio.AsyncIOMotorClient(mongodb_connection_string)
     await init_beanie(database=client.ibex, document_models=classes)
@@ -116,7 +119,7 @@ def json_responce(result):
 @app.post("/posts", response_description="Get list of posts", response_model=List[Post])
 async def posts(post_request_params: PostRequestParams, current_email: str = Depends(get_current_user_email)) -> List[Post]:
     await mongo([Post])
-    
+    # return json_responce({'is': 'ok'})
     search_criteria = generate_search_criteria(post_request_params)
 
     result = await Post.find(search_criteria)\
@@ -313,21 +316,41 @@ async def collect_sample(monitor_id: IdRequestParams, current_email: str = Depen
 
 @app.post("/get_hits_count", response_description="Get amount of post for monitor")
 async def get_hits_count(postRequestParamsSinge: IdRequestParams, current_email: str = Depends(get_current_user_email)):
-    await mongo([CollectTask])
+    # await mongo([CollectTask])
 
-    collect_tasks = await CollectTask.find(CollectTask.monitor_id == UUID(postRequestParamsSinge.id)).to_list()
-    # counts = {} 
-    # for platform in Platform:
-    #     counts[platform] = sum([collect_task.hits_count or 0 for collect_task in collect_tasks if collect_task.platform == platform])
-    from itertools import groupby
-    getTerm = lambda collect_task: collect_task.search_terms[0].term
+    # collect_tasks = await CollectTask.find(CollectTask.monitor_id == UUID(postRequestParamsSinge.id)).to_list()
+    # # counts = {} 
+    # # for platform in Platform:
+    # #     counts[platform] = sum([collect_task.hits_count or 0 for collect_task in collect_tasks if collect_task.platform == platform])
+    # from itertools import groupby
+    # getTerm = lambda collect_task: collect_task.search_terms[0].term
 
 
-    terms_with_counts = {}
-    for _name, _list in groupby(sorted(collect_tasks, key=getTerm), key=getTerm):
-        terms_with_counts[_name] = {}
-        for item in _list:
-            terms_with_counts[_name][item.platform] = item.hits_count
+    # terms_with_counts = { 'search_terms': [] }
+    # for _name, _list in groupby(sorted(collect_tasks, key=getTerm), key=getTerm):
+    #     term_counts = {}
+    #     term_counts['search_term'] = _name
+    #     for item in _list:
+    #         term_counts[item.platform] = item.hits_count
+    #     terms_with_counts['search_terms'].append(term_counts)
+    terms_with_counts = [{
+        'search_term':'Ukraine AND Russia',
+        'facebook': 150000,
+        'twitter': 85000,
+        'youtube': 59000,
+        },
+        {
+        'search_term':'Ukraine AND Liev',
+        'facebook': 110000,
+        'twitter': 51000,
+        'youtube': 18000,
+        },
+        {
+        'search_term':'Ukraine AND Nuclear',
+        'facebook': 800,
+        'twitter': 1800,
+        'youtube': 500,
+        }]
     return JSONResponse(content=jsonable_encoder(terms_with_counts), status_code=200)
 
     
@@ -353,8 +376,21 @@ async def get_monitors(post_tag: TagRequestParams, current_email: str = Depends(
 
 @app.post("/search_account", response_description="Search accounts by string across all platforms")
 async def search_account(search_accounts: SearchAccountsRequest, current_email: str = Depends(get_current_user_email)):
-    # post_tag.tag
-    pass
+    accounts = [
+        {
+            'label': 'BBC',
+            'icon': 'facebook'
+        },
+        {
+            'label': 'BBC',
+            'icon': 'twitter'
+        },
+        {
+            'label': 'BBC',
+            'icon': 'youtube'
+        }
+    ]
+    return JSONResponse(content=jsonable_encoder(accounts), status_code=200)
 
 
 @app.post("/save_and_next", response_description="Save the annotations for the text and return new text for annotation", response_model=TextForAnnotation)
@@ -403,10 +439,11 @@ async def save_and_next(request_annotations: RequestAnnotations) -> TextForAnnot
 
 @app.get('/login')
 async def login(request: Request):
+    print(1111, request.headers['referer'])
     env = 'dev' if 'localhost' in request.headers['referer'] else 'prod'
-    host = request.headers['referer'].rstrip('login')
+    host = 'https://dev.ibex-app.com/' if env == 'dev' else request.headers['referer'].rstrip('login')
     redirect_uri = f'{host}api/token?env={env}'
-    print(888, redirect_uri)
+    print(555, redirect_uri)
     redirect = await oauth.google.authorize_redirect(request, redirect_uri)
     return redirect
 
@@ -417,7 +454,6 @@ async def auth(request: Request):
     print(999, request.url.scheme)
     print(999, request.url.path)
     sub_domain = request.url._url.split('.ibex-app.com')[0].split('//')[1]
-    print(101010, sub_domain)
 
     try:
         access_token = await oauth.google.authorize_access_token(request)
@@ -426,8 +462,8 @@ async def auth(request: Request):
         raise CREDENTIALS_EXCEPTION
 
     user_data = await oauth.google.parse_id_token(access_token, access_token['userinfo']['nonce'])
-
-    if user_data['email'] in ['n.rizhamadze@gmail.com', 'ngvilia123@gmail.com', 'g32.gelashvili@gmail.com', 'alexisadams@gmail.com', 'edekeulenaar@gmail.com', 'djanezashvili@gmail.com', 'naroushvili.d@gmail.com', 'klachashvili@gmail.com', 'nikamamuladze97@gmail.com', 'ninako.chokheli@gmail.com', 'likakhutsiberidze@gmail.com', 'mariamtsitsikashvili@gmail.com']:
+    valid_accounts = os.environ.get('VALID_ACCOUNTS').split('__SEP__')
+    if user_data['email'] in valid_accounts:
         obj_ = {
             'result': True,
             'access_token': create_token(user_data['email']).decode("utf-8") ,
