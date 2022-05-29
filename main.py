@@ -108,7 +108,6 @@ async def mongo(classes, request):
     sub_domain = request.url._url.split('.ibex-app.com')[0].split('//')[1]
     mongodb_connection_string = os.getenv(f'MONGO_CS_{sub_domain.upper()}')
 
-    mongodb_connection_string = os.getenv('MONGO_CS')
     client = motor.motor_asyncio.AsyncIOMotorClient(mongodb_connection_string)
     await init_beanie(database=client.ibex, document_models=classes)
 
@@ -431,7 +430,7 @@ async def search_account(request: Request, search_accounts: SearchAccountsReques
     await mongo([Account], request)
     accounts: List[Account] = []
     for platform in collector_classes:
-        if platform in [Platform.facebook, Platform.telegram, Platform.vkontakte]: continue
+        if platform in [Platform.facebook, Platform.vkontakte]: continue
         data_source = collector_classes[platform]()
         accounts_from_platform: List[Account] = await data_source.get_accounts(search_accounts.substring)
         accounts += accounts_from_platform[:3]
