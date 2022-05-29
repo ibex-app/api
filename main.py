@@ -104,9 +104,9 @@ def generate_search_criteria(post_request_params: PostRequestParams):
     return search_criteria
 
 
-async def mongo(classes):
-    # sub_domain = request.url._url.split('.ibex-app.com')[0].split('//')[1]
-    # mongodb_connection_string = os.getenv(f'MONGO_CS_{sub_domain.upper()}')
+async def mongo(classes, request):
+    sub_domain = request.url._url.split('.ibex-app.com')[0].split('//')[1]
+    mongodb_connection_string = os.getenv(f'MONGO_CS_{sub_domain.upper()}')
 
     mongodb_connection_string = os.getenv('MONGO_CS')
     client = motor.motor_asyncio.AsyncIOMotorClient(mongodb_connection_string)
@@ -119,8 +119,8 @@ def json_responce(result):
 
 
 @app.post("/posts", response_description="Get list of posts", response_model=List[Post])
-async def posts(post_request_params: PostRequestParams):#, current_email: str = Depends(get_current_user_email)) -> List[Post]:
-    await mongo([Post])
+async def posts(request: Request, post_request_params: PostRequestParams, current_email: str = Depends(get_current_user_email)) -> List[Post]:
+    await mongo([Post], request)
     # return json_responce({'is': 'ok'})
     search_criteria = generate_search_criteria(post_request_params)
 
@@ -178,9 +178,9 @@ async def posts(post_request_params: PostRequestParams):#, current_email: str = 
 
 
 @app.post("/posts_aggregated", response_description="Get aggregated data for posts")#, response_model=List[Post])
-async def posts_aggregated(post_request_params_aggregated: PostRequestParamsAggregated):#, current_email: str = Depends(get_current_user_email)):
+async def posts_aggregated(request: Request, post_request_params_aggregated: PostRequestParamsAggregated, current_email: str = Depends(get_current_user_email)):
     
-    await mongo([Post])
+    await mongo([Post], request)
     
     search_criteria = generate_search_criteria(post_request_params_aggregated.post_request_params)
     
@@ -246,8 +246,8 @@ async def posts_aggregated(post_request_params_aggregated: PostRequestParamsAggr
 
 
 @app.post("/post", response_description="Get post details")
-async def post(postRequestParamsSinge: IdRequestParams):#, current_email: str = Depends(get_current_user_email)) -> Post:
-    await mongo([Post])
+async def post(request: Request, postRequestParamsSinge: IdRequestParams, current_email: str = Depends(get_current_user_email)) -> Post:
+    await mongo([Post], request)
     id_ = loads(f'{{"$oid":"{postRequestParamsSinge.id}"}}')
 
     post = await Post.find_one(Post.id == id_)
@@ -256,8 +256,8 @@ async def post(postRequestParamsSinge: IdRequestParams):#, current_email: str = 
 
 
 @app.post("/create_monitor", response_description="Create monitor")
-async def create_monitor(postMonitor: PostMonitor):#, current_email: str = Depends(get_current_user_email)) -> Monitor:
-    await mongo([Monitor, Account, SearchTerm, CollectAction])
+async def create_monitor(request: Request, postMonitor: PostMonitor, current_email: str = Depends(get_current_user_email)) -> Monitor:
+    await mongo([Monitor, Account, SearchTerm, CollectAction], request)
 
     monitor = Monitor(
         title=postMonitor.title, 
@@ -302,9 +302,9 @@ async def create_monitor(postMonitor: PostMonitor):#, current_email: str = Depen
 
 
 @app.post("/update_monitor", response_description="Create monitor")
-async def update_monitor(postMonitor: PostMonitorEdit) -> Monitor:
+async def update_monitor(request: Request, postMonitor: PostMonitorEdit) -> Monitor:
     # the method modifies the monitor in databes and related records
-    await mongo([Monitor, Account, SearchTerm, CollectAction])
+    await mongo([Monitor, Account, SearchTerm, CollectAction], request)
     monitor = await Monitor.get(postMonitor.id)
 
     # if date_from and date_to exists in postMonitor, it is updated
@@ -378,15 +378,15 @@ async def modify_monitor_accounts(postMonitor):
 
 
 @app.post("/collect_sample", response_description="Run sample collection pipeline")
-async def collect_sample(monitor_id: IdRequestParams):#, current_email: str = Depends(get_current_user_email)):
+async def collect_sample(request: Request, monitor_id: IdRequestParams, current_email: str = Depends(get_current_user_email)):
     cmd = f'python3 /root/data-collection-and-processing/main.py --monitor_id={monitor_id.id} --sample=True >> api.out'
     subprocess.Popen(cmd, stdout=None, stderr=None, stdin=None, close_fds=True, shell=True)
     # os.popen(cmd).read()
 
 
 @app.post("/get_hits_count", response_description="Get amount of post for monitor")
-async def get_hits_count(postRequestParamsSinge: IdRequestParams):#, current_email: str = Depends(get_current_user_email)):
-    await mongo([CollectTask])
+async def get_hits_count(request: Request, postRequestParamsSinge: IdRequestParams, current_email: str = Depends(get_current_user_email)):
+    await mongo([CollectTask], request)
 
     collect_tasks = await CollectTask.find(CollectTask.monitor_id == UUID(postRequestParamsSinge.id)).to_list()
     # counts = {} 
@@ -407,8 +407,8 @@ async def get_hits_count(postRequestParamsSinge: IdRequestParams):#, current_ema
 
     
 @app.post("/get_monitor", response_description="Get monitor")
-async def search_account(monitor_id: IdRequestParams):#, current_email: str = Depends(get_current_user_email)):
-    await mongo([Monitor, SearchTerm, Account])
+async def search_account(request: Request, monitor_id: IdRequestParams, current_email: str = Depends(get_current_user_email)):
+    await mongo([Monitor, SearchTerm, Account], request)
     monitor = await Monitor.get(monitor_id.id)
     search_terms = await SearchTerm.find(In(SearchTerm.tags, [monitor_id.id])).to_list()
     accounts = await Account.find(In(SearchTerm.tags, [monitor_id.id])).to_list()
@@ -416,8 +416,8 @@ async def search_account(monitor_id: IdRequestParams):#, current_email: str = De
 
 
 @app.post("/get_monitors", response_description="Get monitors")
-async def get_monitors(post_tag: TagRequestParams):#, current_email: str = Depends(get_current_user_email)) -> Monitor:
-    await mongo([Monitor])
+async def get_monitors(request: Request, post_tag: TagRequestParams, current_email: str = Depends(get_current_user_email)) -> Monitor:
+    await mongo([Monitor], request)
     if post_tag.tag == '*':
         monitor = await Monitor.find().to_list()
     else:
@@ -427,8 +427,8 @@ async def get_monitors(post_tag: TagRequestParams):#, current_email: str = Depen
 
 
 @app.post("/search_account", response_description="Search accounts by string across all platforms")
-async def search_account(search_accounts: SearchAccountsRequest):#, current_email: str = Depends(get_current_user_email)):
-    await mongo([Account])
+async def search_account(request: Request, search_accounts: SearchAccountsRequest, current_email: str = Depends(get_current_user_email)):
+    await mongo([Account], request)
     accounts: List[Account] = []
     for platform in collector_classes:
         if platform in [Platform.facebook, Platform.telegram, Platform.vkontakte]: continue
@@ -440,8 +440,8 @@ async def search_account(search_accounts: SearchAccountsRequest):#, current_emai
 
 
 @app.post("/save_and_next", response_description="Save the annotations for the text and return new text for annotation", response_model=TextForAnnotation)
-async def save_and_next(request_annotations: RequestAnnotations) -> TextForAnnotation:
-    await mongo([Annotations, TextForAnnotation])
+async def save_and_next(request: Request, request_annotations: RequestAnnotations) -> TextForAnnotation:
+    await mongo([Annotations, TextForAnnotation], request)
     
     annotations = Annotations(text_id = request_annotations.text_id, user_mail = request_annotations.user_mail, annotations = request_annotations.annotations)
 
