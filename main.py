@@ -8,7 +8,7 @@ from datetime import datetime
 from uuid import UUID
 from typing import List
 from ibex_models import  Post, Annotations, TextForAnnotation, Monitor, Platform, Account, SearchTerm, CollectAction, CollectTask
-from model import PostRequestParams, RequestAnnotations, PostRequestParamsAggregated, PostMonitor, TagRequestParams, IdRequestParams, SearchAccountsRequest
+from model import PostRequestParams, RequestAnnotations, PostRequestParamsAggregated, PostMonitor, TagRequestParams, IdRequestParams, SearchAccountsRequest, PostMonitorEdit
 from beanie.odm.operators.find.comparison import In
 
 from bson import json_util, ObjectId
@@ -302,11 +302,79 @@ async def create_monitor(postMonitor: PostMonitor):#, current_email: str = Depen
 
 
 @app.post("/update_monitor", response_description="Create monitor")
-async def update_monitor(monitor_: Monitor):#, current_email: str = Depends(get_current_user_email)) -> Monitor:
-    monitor = await Monitor.get(monitor_.id)
-    for key, value in monitor_.__dict__:
-        monitor[key] = value
-    await monitor.save()
+async def update_monitor(postMonitor: PostMonitorEdit) -> Monitor:
+    # the method modifies the monitor in databes and related records
+    await mongo([Monitor, Account, SearchTerm, CollectAction])
+    monitor = await Monitor.get(postMonitor.id)
+
+    # if date_from and date_to exists in postMonitor, it is updated
+    if postMonitor.date_from: monitor.date_from = postMonitor.date_from
+    if postMonitor.date_to: monitor.date_to = postMonitor.date_to
+
+    await modify_monitor_search_terms(postMonitor)
+    await modify_monitor_accounts(postMonitor)
+
+    # if platforms are passed, it needs to be compared to existing list and
+    # and if changes are made, existing records needs to be modified
+    # platforms: Optional[List[Platform]]
+
+    # if languages are passed, it needs to be compared to existing list and
+    # and if changes are made, existing records needs to be modified
+    # languages: Optional[List[str]]
+
+
+async def modify_monitor_search_terms(postMonitor):
+    # if search terms are passed, it needs to be compared to existing list and
+    # and if changes are made, existing records needs to be modified
+    # finding search terms in db which are no longer preseng in the post request
+    db_search_terms: List[SearchTerm] = await SearchTerm.find(In(SearchTerm.tags, [postMonitor.id])).to_list()
+    db_search_terms_to_to_remove_from_db: List[SearchTerm] = [search_term for search_term in db_search_terms if
+                                                              search_term not in postMonitor.search_terms]
+
+    for search_term in db_search_terms_to_to_remove_from_db:
+        search_term.tags = [tag for tag in search_term.tags if tag != postMonitor.id]
+        await search_term.save()
+
+    # finding search terms that are not taged in db
+    db_search_terms_strs: List[str] = [search_term.term for search_term in db_search_terms]
+    search_terms_to_add_to_db: List[str] = [search_term for search_term in postMonitor.search_terms if
+                                            search_term not in db_search_terms_strs]
+
+    searchs_to_insert = []
+    for search_term_str in search_terms_to_add_to_db:
+        db_search_term = await SearchTerm.find(SearchTerm.term == search_term_str).to_list()
+        if db_search_term[0]:
+            # If same keyword exists in db, monitor.id is added to it's tags list
+            db_search_term[0].tags.append(str(postMonitor.id))
+            await db_search_term[0].save()
+        else:
+            # If keyword does not exists in db, new keyword is created
+            searchs_to_insert.append(SearchTerm(term=search_term_str, tags=[str(postMonitor.id)]))
+    if len(searchs_to_insert): await SearchTerm.insert_many(searchs_to_insert)
+
+
+async def modify_monitor_accounts(postMonitor):
+    # if accounts are passed, it needs to be compared to existing list and
+    # and if changes are made, existing records needs to be modified
+    # accounts: List[AccountReques]
+    db_accounts: List[SearchTerm] = await Account.find(In(Account.tags, [postMonitor.id])).to_list()
+    account_not_in_monitor = lambda db_account: len(
+        [account for account in postMonitor.accounts if account == db_account.id]) == 0
+    db_accounts_terms_to_to_remove_from_db: List[Account] = [account for account in db_accounts if
+                                                             account_not_in_monitor(account)]
+
+    for account in db_accounts_terms_to_to_remove_from_db:
+        account.tags = [tag for tag in account.tags if tag != postMonitor.id]
+        await account.save()
+
+    accounts_to_insert = [Account(
+        title=account.title,
+        platform=account.platform,
+        platform_id=account.platform_id,
+        tags=[str(postMonitor.id)],
+        url='') for account in postMonitor.accounts if not account.id]
+
+    if len(accounts_to_insert): await Account.insert_many(accounts_to_insert)
 
 
 @app.post("/collect_sample", response_description="Run sample collection pipeline")
