@@ -318,41 +318,23 @@ async def collect_sample(monitor_id: IdRequestParams):#, current_email: str = De
 
 @app.post("/get_hits_count", response_description="Get amount of post for monitor")
 async def get_hits_count(postRequestParamsSinge: IdRequestParams):#, current_email: str = Depends(get_current_user_email)):
-    # await mongo([CollectTask])
+    await mongo([CollectTask])
 
-    # collect_tasks = await CollectTask.find(CollectTask.monitor_id == UUID(postRequestParamsSinge.id)).to_list()
-    # # counts = {} 
-    # # for platform in Platform:
-    # #     counts[platform] = sum([collect_task.hits_count or 0 for collect_task in collect_tasks if collect_task.platform == platform])
-    # from itertools import groupby
-    # getTerm = lambda collect_task: collect_task.search_terms[0].term
+    collect_tasks = await CollectTask.find(CollectTask.monitor_id == UUID(postRequestParamsSinge.id)).to_list()
+    # counts = {} 
+    # for platform in Platform:
+    #     counts[platform] = sum([collect_task.hits_count or 0 for collect_task in collect_tasks if collect_task.platform == platform])
+    from itertools import groupby
+    getTerm = lambda collect_task: collect_task.search_terms[0].term
 
 
-    # terms_with_counts = { 'search_terms': [] }
-    # for _name, _list in groupby(sorted(collect_tasks, key=getTerm), key=getTerm):
-    #     term_counts = {}
-    #     term_counts['search_term'] = _name
-    #     for item in _list:
-    #         term_counts[item.platform] = item.hits_count
-    #     terms_with_counts['search_terms'].append(term_counts)
-    terms_with_counts = [{
-        'search_term':'Ukraine AND Russia',
-        'facebook': 150000,
-        'twitter': 85000,
-        'youtube': 59000,
-        },
-        {
-        'search_term':'Ukraine AND Liev',
-        'facebook': 110000,
-        'twitter': 51000,
-        'youtube': 18000,
-        },
-        {
-        'search_term':'Ukraine AND Nuclear',
-        'facebook': 800,
-        'twitter': 1800,
-        'youtube': 500,
-        }]
+    terms_with_counts = { 'search_terms': [] }
+    for _name, _list in groupby(sorted(collect_tasks, key=getTerm), key=getTerm):
+        term_counts = {}
+        term_counts['search_term'] = _name
+        for item in _list:
+            term_counts[item.platform] = item.hits_count
+        terms_with_counts['search_terms'].append(term_counts)
     return JSONResponse(content=jsonable_encoder(terms_with_counts), status_code=200)
 
     
