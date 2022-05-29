@@ -34,6 +34,8 @@ from jwt_ import get_current_user_email
 from authlib.integrations.starlette_client import OAuth
 from starlette.config import Config
 
+from app.core.datasources import collector_classes
+
 # OAuth settings
 GOOGLE_CLIENT_ID = os.environ.get('GOOGLE_CLIENT_ID') or None
 GOOGLE_CLIENT_SECRET = os.environ.get('GOOGLE_CLIENT_SECRET') or None
@@ -117,7 +119,7 @@ def json_responce(result):
 
 
 @app.post("/posts", response_description="Get list of posts", response_model=List[Post])
-async def posts(post_request_params: PostRequestParams, current_email: str = Depends(get_current_user_email)) -> List[Post]:
+async def posts(post_request_params: PostRequestParams):#, current_email: str = Depends(get_current_user_email)) -> List[Post]:
     await mongo([Post])
     # return json_responce({'is': 'ok'})
     search_criteria = generate_search_criteria(post_request_params)
@@ -176,7 +178,7 @@ async def posts(post_request_params: PostRequestParams, current_email: str = Dep
 
 
 @app.post("/posts_aggregated", response_description="Get aggregated data for posts")#, response_model=List[Post])
-async def posts_aggregated(post_request_params_aggregated: PostRequestParamsAggregated, current_email: str = Depends(get_current_user_email)):
+async def posts_aggregated(post_request_params_aggregated: PostRequestParamsAggregated):#, current_email: str = Depends(get_current_user_email)):
     
     await mongo([Post])
     
@@ -244,7 +246,7 @@ async def posts_aggregated(post_request_params_aggregated: PostRequestParamsAggr
 
 
 @app.post("/post", response_description="Get post details")
-async def post(postRequestParamsSinge: IdRequestParams, current_email: str = Depends(get_current_user_email)) -> Post:
+async def post(postRequestParamsSinge: IdRequestParams):#, current_email: str = Depends(get_current_user_email)) -> Post:
     await mongo([Post])
     id_ = loads(f'{{"$oid":"{postRequestParamsSinge.id}"}}')
 
@@ -254,7 +256,7 @@ async def post(postRequestParamsSinge: IdRequestParams, current_email: str = Dep
 
 
 @app.post("/create_monitor", response_description="Create monitor")
-async def create_monitor(postMonitor: PostMonitor, current_email: str = Depends(get_current_user_email)) -> Monitor:
+async def create_monitor(postMonitor: PostMonitor):#, current_email: str = Depends(get_current_user_email)) -> Monitor:
     await mongo([Monitor, Account, SearchTerm, CollectAction])
 
     monitor = Monitor(
@@ -300,7 +302,7 @@ async def create_monitor(postMonitor: PostMonitor, current_email: str = Depends(
 
 
 @app.post("/update_monitor", response_description="Create monitor")
-async def update_monitor(monitor_: Monitor, current_email: str = Depends(get_current_user_email)) -> Monitor:
+async def update_monitor(monitor_: Monitor):#, current_email: str = Depends(get_current_user_email)) -> Monitor:
     monitor = await Monitor.get(monitor_.id)
     for key, value in monitor_.__dict__:
         monitor[key] = value
@@ -308,14 +310,14 @@ async def update_monitor(monitor_: Monitor, current_email: str = Depends(get_cur
 
 
 @app.post("/collect_sample", response_description="Run sample collection pipeline")
-async def collect_sample(monitor_id: IdRequestParams, current_email: str = Depends(get_current_user_email)):
+async def collect_sample(monitor_id: IdRequestParams):#, current_email: str = Depends(get_current_user_email)):
     cmd = f'python3 /root/data-collection-and-processing/main.py --monitor_id={monitor_id.id} --sample=True >> api.out'
     subprocess.Popen(cmd, stdout=None, stderr=None, stdin=None, close_fds=True, shell=True)
     # os.popen(cmd).read()
 
 
 @app.post("/get_hits_count", response_description="Get amount of post for monitor")
-async def get_hits_count(postRequestParamsSinge: IdRequestParams, current_email: str = Depends(get_current_user_email)):
+async def get_hits_count(postRequestParamsSinge: IdRequestParams):#, current_email: str = Depends(get_current_user_email)):
     # await mongo([CollectTask])
 
     # collect_tasks = await CollectTask.find(CollectTask.monitor_id == UUID(postRequestParamsSinge.id)).to_list()
@@ -355,7 +357,7 @@ async def get_hits_count(postRequestParamsSinge: IdRequestParams, current_email:
 
     
 @app.post("/get_monitor", response_description="Get monitor")
-async def search_account(monitor_id: IdRequestParams, current_email: str = Depends(get_current_user_email)):
+async def search_account(monitor_id: IdRequestParams):#, current_email: str = Depends(get_current_user_email)):
     await mongo([Monitor, SearchTerm, Account])
     monitor = await Monitor.get(monitor_id.id)
     search_terms = await SearchTerm.find(In(SearchTerm.tags, [monitor_id.id])).to_list()
@@ -364,7 +366,7 @@ async def search_account(monitor_id: IdRequestParams, current_email: str = Depen
 
 
 @app.post("/get_monitors", response_description="Get monitors")
-async def get_monitors(post_tag: TagRequestParams, current_email: str = Depends(get_current_user_email)) -> Monitor:
+async def get_monitors(post_tag: TagRequestParams):#, current_email: str = Depends(get_current_user_email)) -> Monitor:
     await mongo([Monitor])
     if post_tag.tag == '*':
         monitor = await Monitor.find().to_list()
@@ -375,21 +377,15 @@ async def get_monitors(post_tag: TagRequestParams, current_email: str = Depends(
 
 
 @app.post("/search_account", response_description="Search accounts by string across all platforms")
-async def search_account(search_accounts: SearchAccountsRequest, current_email: str = Depends(get_current_user_email)):
-    accounts = [
-        {
-            'label': 'BBC',
-            'icon': 'facebook'
-        },
-        {
-            'label': 'BBC',
-            'icon': 'twitter'
-        },
-        {
-            'label': 'BBC',
-            'icon': 'youtube'
-        }
-    ]
+async def search_account(search_accounts: SearchAccountsRequest):#, current_email: str = Depends(get_current_user_email)):
+    await mongo([Account])
+    accounts: List[Account] = []
+    for platform in collector_classes:
+        if platform in [Platform.facebook, Platform.telegram, Platform.vkontakte]: continue
+        data_source = collector_classes[platform]()
+        accounts_from_platform: List[Account] = await data_source.get_accounts(search_accounts.substring)
+        accounts += accounts_from_platform[:3]
+    
     return JSONResponse(content=jsonable_encoder(accounts), status_code=200)
 
 
@@ -439,26 +435,20 @@ async def save_and_next(request_annotations: RequestAnnotations) -> TextForAnnot
 
 @app.get('/login')
 async def login(request: Request):
-    print(1111, request.headers['referer'])
     env = 'dev' if 'localhost' in request.headers['referer'] else 'prod'
     host = 'https://dev.ibex-app.com/' if env == 'dev' else request.headers['referer'].rstrip('login')
     redirect_uri = f'{host}api/token?env={env}'
-    print(555, redirect_uri)
     redirect = await oauth.google.authorize_redirect(request, redirect_uri)
     return redirect
 
 
 @app.route('/token')
 async def auth(request: Request):
-    print(999, request.url._url)
-    print(999, request.url.scheme)
-    print(999, request.url.path)
     sub_domain = request.url._url.split('.ibex-app.com')[0].split('//')[1]
 
     try:
         access_token = await oauth.google.authorize_access_token(request)
     except OAuthError as err:
-        print(str(err))
         raise CREDENTIALS_EXCEPTION
 
     user_data = await oauth.google.parse_id_token(access_token, access_token['userinfo']['nonce'])
