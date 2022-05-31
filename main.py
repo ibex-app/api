@@ -257,7 +257,13 @@ async def post(request: Request, postRequestParamsSinge: RequestId, current_emai
 
 @app.post("/add_tag_to_post", response_description="Updated post is returned")
 async def post(request: Request, requestAddTagToPost: RequestAddTagToPost, current_email: str = Depends(get_current_user_email)) -> bool:
-    pass
+    await mongo([Post], request)
+    post = await Post.get(requestAddTagToPost.id)
+    post.labels = getattr(post, 'labels', Labels())
+    post.labels.manual_tags = getattr(post.labels, 'manual_tags', [])
+    post.labels.manual_tags += requestAddTagToPost.tags
+    await post.save()
+    return True
 
 @app.post("/create_monitor", response_description="Create monitor")
 async def create_monitor(request: Request, postMonitor: RequestMonitor, current_email: str = Depends(get_current_user_email)) -> Monitor:
