@@ -254,6 +254,10 @@ async def post(request: Request, postRequestParamsSinge: IdRequestParams, curren
     return JSONResponse(content=jsonable_encoder(post), status_code=200)
 
 
+@app.post("/add_tag_to_post", response_description="Updated post is returned")
+async def post(request: Request, postRequestParamsSinge: IdRequestParams, current_email: str = Depends(get_current_user_email)) -> Post:
+    pass
+
 @app.post("/create_monitor", response_description="Create monitor")
 async def create_monitor(request: Request, postMonitor: PostMonitor, current_email: str = Depends(get_current_user_email)) -> Monitor:
     await mongo([Monitor, Account, SearchTerm, CollectAction], request)
@@ -430,7 +434,7 @@ async def search_account(request: Request, search_accounts: SearchAccountsReques
     await mongo([Account], request)
     accounts: List[Account] = []
     for platform in collector_classes:
-        if platform in [Platform.facebook, Platform.vkontakte]: continue
+        if platform in [Platform.facebook]: continue
         data_source = collector_classes[platform]()
         accounts_from_platform: List[Account] = await data_source.get_accounts(search_accounts.substring)
         accounts += accounts_from_platform[:3]
@@ -480,7 +484,6 @@ async def save_and_next(request: Request, request_annotations: RequestAnnotation
 
     text_for_annotation = TextForAnnotation(id=text_for_annotation[0]["_id"], post_id = text_for_annotation[0]["text"]["post_id"], words=text_for_annotation[0]["text"]["words"])
     return text_for_annotation
-
 
 @app.get('/login')
 async def login(request: Request):
