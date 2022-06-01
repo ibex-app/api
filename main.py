@@ -22,6 +22,7 @@ from fastapi import FastAPI, Request, Depends
 from fastapi.responses import JSONResponse, RedirectResponse
 from fastapi.encoders import jsonable_encoder
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import StreamingResponse
 import os
 import subprocess
 
@@ -176,6 +177,19 @@ async def posts(request: Request, post_request_params: RequestPostsFilters, curr
         
     return json_responce(result)
 
+@app.post("/download_posts", response_description="Get csv file of posts", response_model=List[Post])
+async def download_posts(request: Request, post_request_params: RequestPostsFilters) -> List[Post]:
+    await mongo([Post], request)
+    
+    result = await Post.find()
+
+    for result_ in result:
+        result_['api_dump'] = ''
+    
+    export_media_type = 'text/csv'
+    export_headers = { "Content-Disposition": "attachment; filename=posts.csv" }
+    return StreamingResponse(result, headers=export_headers, media_type=export_media_type)
+    
 
 @app.post("/posts_aggregated", response_description="Get aggregated data for posts")#, response_model=List[Post])
 async def posts_aggregated(request: Request, post_request_params_aggregated: RequestPostsFiltersAggregated, current_email: str = Depends(get_current_user_email)):
@@ -256,7 +270,7 @@ async def post(request: Request, postRequestParamsSinge: RequestId, current_emai
 
 
 @app.post("/add_tag_to_post", response_description="Updated post is returned")
-async def post(request: Request, requestAddTagToPost: RequestAddTagToPost, current_email: str = Depends(get_current_user_email)) -> bool:
+async def add_tag_to_post(request: Request, requestAddTagToPost: RequestAddTagToPost, current_email: str = Depends(get_current_user_email)) -> bool:
     await mongo([Post], request)
     post = await Post.get(requestAddTagToPost.id)
     post.labels = getattr(post, 'labels', Labels())
