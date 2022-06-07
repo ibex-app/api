@@ -17,6 +17,7 @@ from bson.json_util import dumps, loads
 from pydantic import Field, BaseModel, validator
 
 import json 
+import pandas as pd
 
 from fastapi import FastAPI, Request, Depends
 from fastapi.responses import JSONResponse, RedirectResponse
@@ -108,6 +109,7 @@ def generate_search_criteria(post_request_params: RequestPostsFilters):
 
 async def mongo(classes, request):
     sub_domain = request.url._url.split('.ibex-app.com')[0].split('//')[1]
+    sub_domain = sub_domain if sub_domain in ['dev', 'un', 'isfed'] else 'dev'
     mongodb_connection_string = os.getenv(f'MONGO_CS_{sub_domain.upper()}')
 
     client = motor.motor_asyncio.AsyncIOMotorClient(mongodb_connection_string)
@@ -122,7 +124,6 @@ def json_responce(result):
 @app.post("/posts", response_description="Get list of posts", response_model=List[Post])
 async def posts(request: Request, post_request_params: RequestPostsFilters, current_email: str = Depends(get_current_user_email)) -> List[Post]:
     await mongo([Post], request)
-    # return json_responce({'is': 'ok'})
     search_criteria = generate_search_criteria(post_request_params)
 
     result = await Post.find(search_criteria)\
@@ -171,24 +172,66 @@ async def posts(request: Request, post_request_params: RequestPostsFilters, curr
 
     for result_ in result:
         result_['api_dump'] = ''
-        # for result_key in result_.keys():
-        #     if type(result_[result_key]) == float:
-        #         result_[result_key] = 'NN'
         
     return json_responce(result)
 
-@app.post("/download_posts", response_description="Get csv file of posts", response_model=List[Post])
-async def download_posts(request: Request, post_request_params: RequestPostsFilters) -> List[Post]:
-    await mongo([Post], request)
-    
-    result = await Post.find()
 
-    for result_ in result:
+@app.post("/download_posts", response_description="Get csv file of posts")
+async def download_posts(request: Request, post_request_params:RequestPostsFilters):
+    await mongo([Post], request)
+    search_criteria = generate_search_criteria(post_request_params)
+
+    posts = await Post.find(search_criteria)\
+        .aggregate([
+            {   '$sort': { 'created_at': -1 }},
+            {
+                '$skip': post_request_params.start_index
+            },
+            {
+                '$limit': post_request_params.count
+            },
+            {
+                '$lookup': {
+                        'from': "tags",
+                        'localField': "labels.topics",
+                        'foreignField': "_id",
+                        'as': "labels.topics"
+                    }
+            },
+            {
+                '$lookup': {
+                        'from': "tags",
+                        'localField': "labels.locations",
+                        'foreignField': "_id",
+                        'as': "labels.locations"
+                    }
+            },
+            {
+                '$lookup': {
+                        'from': "tags",
+                        'localField': "labels.persons",
+                        'foreignField': "_id",
+                        'as': "labels.persons"
+                    }
+            },
+            {
+                '$lookup': {
+                    'from': "accounts",
+                    'localField': f"account_id",
+                    'foreignField': "_id",
+                    'as': "account"
+                }
+            },
+        ])\
+        .to_list()
+
+    for result_ in posts:
         result_['api_dump'] = ''
     
-    export_media_type = 'text/csv'
-    export_headers = { "Content-Disposition": "attachment; filename=posts.csv" }
-    return StreamingResponse(result, headers=export_headers, media_type=export_media_type)
+    posts_df = pd.DataFrame([o.__dict__ for o in posts])
+    path = f'/root/frontend/build/{post_request_params.monitor_id}.csv'
+    posts_df.to_csv(path, index=None)
+    return JSONResponse(content=jsonable_encoder({'file_location': path}), status_code=200)
     
 
 @app.post("/posts_aggregated", response_description="Get aggregated data for posts")#, response_model=List[Post])
@@ -279,6 +322,7 @@ async def add_tag_to_post(request: Request, requestAddTagToPost: RequestAddTagTo
     await post.save()
     return True
 
+
 @app.post("/create_monitor", response_description="Create monitor")
 async def create_monitor(request: Request, postMonitor: RequestMonitor, current_email: str = Depends(get_current_user_email)) -> Monitor:
     await mongo([Monitor, Account, SearchTerm, CollectAction], request)
@@ -291,18 +335,22 @@ async def create_monitor(request: Request, postMonitor: RequestMonitor, current_
         date_to=postMonitor.date_to
     )
     # print(monitor.id, type(monitor.id), type(str(monitor.id)))
-    search_terms = [SearchTerm(
-            term=search_term, 
-            tags=[str(monitor.id)]
-        ) for search_term in postMonitor.search_terms]
-
-    accounts = [Account(
-            title = account.title, 
-            platform = account.platform, 
-            platform_id = account.platform_id, 
-            tags = [str(monitor.id)],
-            url=''
-        ) for account in postMonitor.accounts]
+    search_terms = []
+    if postMonitor.search_terms:
+        search_terms = [SearchTerm(
+                term=search_term, 
+                tags=[str(monitor.id)]
+            ) for search_term in postMonitor.search_terms]
+    
+    accounts = []
+    if postMonitor.accounts:
+        accounts = [Account(
+                title = account.title, 
+                platform = account.platform, 
+                platform_id = account.platform_id, 
+                tags = [str(monitor.id)],
+                url=''
+            ) for account in postMonitor.accounts]
     
     platforms = postMonitor.platforms if postMonitor.platforms and len(postMonitor.platforms) else [account.platform for account in postMonitor.accounts]
     
@@ -455,11 +503,14 @@ async def search_account(request: Request, search_accounts: RequestAccountsSearc
     await mongo([Account], request)
     accounts: List[Account] = []
     for platform in collector_classes:
-        if platform in [Platform.facebook]: continue
+        # if platform in [Platform.facebook]: continue
         data_source = collector_classes[platform]()
         accounts_from_platform: List[Account] = await data_source.get_accounts(search_accounts.substring)
+        print('2222', platform, len(accounts_from_platform))
         accounts += accounts_from_platform[:3]
-    
+    for account in accounts:
+        account.label = account.title
+        account.icon = account.platform
     return JSONResponse(content=jsonable_encoder(accounts), status_code=200)
 
 
@@ -505,6 +556,7 @@ async def save_and_next(request: Request, request_annotations: RequestAnnotation
 
     text_for_annotation = TextForAnnotation(id=text_for_annotation[0]["_id"], post_id = text_for_annotation[0]["text"]["post_id"], words=text_for_annotation[0]["text"]["words"])
     return text_for_annotation
+
 
 @app.get('/login')
 async def login(request: Request):

@@ -58,7 +58,7 @@ class RequestMonitor(BaseModel):
     date_from: datetime
     date_to: Optional[datetime]
     search_terms: List[str]
-    accounts: List[RequestAccount]
+    accounts: Optional[List[RequestAccount]]
     platforms: Optional[List[Platform]]
     languages: Optional[List[str]]
 
