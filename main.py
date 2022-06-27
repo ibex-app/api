@@ -376,16 +376,24 @@ async def create_monitor(request: Request, postMonitor: RequestMonitor, current_
 @app.post("/update_monitor", response_description="Create monitor")
 async def update_monitor(request: Request, postMonitor: RequestMonitorEdit) -> Monitor:
     # the method modifies the monitor in databes and related records
-    await mongo([Monitor, Account, SearchTerm, CollectAction], request)
+    await mongo([Monitor, Account, SearchTerm, CollectAction, Post], request)
+    print(type(postMonitor.id))
+    await CollectTask.find(CollectTask.monitor_id == postMonitor.id).delete()
+    await Post.find(In(Post.monitor_ids, [postMonitor.id])).delete()
+    
     monitor = await Monitor.get(postMonitor.id)
 
     # if date_from and date_to exists in postMonitor, it is updated
     if postMonitor.date_from: monitor.date_from = postMonitor.date_from
     if postMonitor.date_to: monitor.date_to = postMonitor.date_to
+    
+    if postMonitor.search_terms:
+        await modify_monitor_search_terms(postMonitor)
+    if postMonitor.accounts:
+        await modify_monitor_accounts(postMonitor)
 
-    await modify_monitor_search_terms(postMonitor)
-    await modify_monitor_accounts(postMonitor)
-
+    await monitor.save()
+    collect_sample_cmd(postMonitor.id)
     # if platforms are passed, it needs to be compared to existing list and
     # and if changes are made, existing records needs to be modified
     # platforms: Optional[List[Platform]]
@@ -402,7 +410,9 @@ async def modify_monitor_search_terms(postMonitor):
     db_search_terms: List[SearchTerm] = await SearchTerm.find(In(SearchTerm.tags, [postMonitor.id])).to_list()
     db_search_terms_to_to_remove_from_db: List[SearchTerm] = [search_term for search_term in db_search_terms if
                                                               search_term not in postMonitor.search_terms]
-
+    
+    print(f'db_search_terms: {db_search_terms}')
+    print(f'db_search_terms_to_to_remove_from_db: {db_search_terms_to_to_remove_from_db}')
     for search_term in db_search_terms_to_to_remove_from_db:
         search_term.tags = [tag for tag in search_term.tags if tag != postMonitor.id]
         await search_term.save()
@@ -411,7 +421,8 @@ async def modify_monitor_search_terms(postMonitor):
     db_search_terms_strs: List[str] = [search_term.term for search_term in db_search_terms]
     search_terms_to_add_to_db: List[str] = [search_term for search_term in postMonitor.search_terms if
                                             search_term not in db_search_terms_strs]
-
+    print(f'db_search_terms_strs: {db_search_terms_strs}')
+    print(f'search_terms_to_add_to_db: {search_terms_to_add_to_db}')
     searchs_to_insert = []
     for search_term_str in search_terms_to_add_to_db:
         db_search_term = await SearchTerm.find(SearchTerm.term == search_term_str).to_list()
@@ -422,6 +433,7 @@ async def modify_monitor_search_terms(postMonitor):
         else:
             # If keyword does not exists in db, new keyword is created
             searchs_to_insert.append(SearchTerm(term=search_term_str, tags=[str(postMonitor.id)]))
+
     if len(searchs_to_insert): await SearchTerm.insert_many(searchs_to_insert)
 
 
@@ -451,9 +463,11 @@ async def modify_monitor_accounts(postMonitor):
 
 @app.post("/collect_sample", response_description="Run sample collection pipeline")
 async def collect_sample(request: Request, monitor_id: RequestId, current_email: str = Depends(get_current_user_email)):
-    cmd = f'python3 /root/data-collection-and-processing/main.py --monitor_id={monitor_id.id} --sample=True >> api.out'
+    collect_sample_cmd(monitor_id.id)
+
+def collect_sample_cmd(monitor_id:str):
+    cmd = f'python3 /root/data-collection-and-processing/main.py --monitor_id={monitor_id} --sample=True >> api.out'
     subprocess.Popen(cmd, stdout=None, stderr=None, stdin=None, close_fds=True, shell=True)
-    # os.popen(cmd).read()
 
 
 @app.post("/get_hits_count", response_description="Get amount of post for monitor")
@@ -467,6 +481,7 @@ async def get_hits_count(request: Request, postRequestParamsSinge: RequestId, cu
     from itertools import groupby
     getTerm = lambda collect_task: collect_task.search_terms[0].term
 
+    sorted_tasks = sorted(collect_tasks, key=getTerm)
 
     terms_with_counts = { 'search_terms': [] }
     for _name, _list in groupby(sorted(collect_tasks, key=getTerm), key=getTerm):
@@ -475,6 +490,7 @@ async def get_hits_count(request: Request, postRequestParamsSinge: RequestId, cu
         for item in _list:
             term_counts[item.platform] = item.hits_count
         terms_with_counts['search_terms'].append(term_counts)
+
     return JSONResponse(content=jsonable_encoder(terms_with_counts), status_code=200)
 
     
