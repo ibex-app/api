@@ -480,18 +480,18 @@ async def get_hits_count(request: Request, postRequestParamsSinge: RequestId, cu
     #     counts[platform] = sum([collect_task.hits_count or 0 for collect_task in collect_tasks if collect_task.platform == platform])
     from itertools import groupby
     getTerm = lambda collect_task: collect_task.search_terms[0].term
-
-    sorted_tasks = sorted(collect_tasks, key=getTerm)
+    getTottal = lambda search_term_counts: sum([i for i in search_term_counts.values() if isinstance(i,  numbers.Number)])
 
     terms_with_counts = { 'search_terms': [] }
-    for _name, _list in groupby(sorted(collect_tasks, key=getTerm), key=getTerm):
+    for _name, _list in groupby(collect_tasks, key=getTerm):
         term_counts = {}
         term_counts['search_term'] = _name
         for item in _list:
             term_counts[item.platform] = item.hits_count
         terms_with_counts['search_terms'].append(term_counts)
 
-    return JSONResponse(content=jsonable_encoder(terms_with_counts), status_code=200)
+    sorted_terms = sorted(terms_with_counts['search_terms'], key=getTottal)
+    return JSONResponse(content=jsonable_encoder(sorted_terms), status_code=200)
 
     
 @app.post("/get_monitor", response_description="Get monitor")
