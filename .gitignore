@@ -5,3 +5,6 @@ _main.sh
 **.pyc
 __pycache__/
 *.py[cod]
+*.session
+*.session-journal
+vk_config.v2.json

@@ -1,3 +1,4 @@
+from tkinter import Label
 from turtle import st
 from beanie import init_beanie
 import motor
@@ -7,8 +8,8 @@ from bson.binary import Binary
 from datetime import datetime
 from uuid import UUID
 from typing import List
-from ibex_models import  Post, Annotations, TextForAnnotation, Monitor, Platform, Account, SearchTerm, CollectAction, CollectTask
-from model import PostRequestParams, RequestAnnotations, PostRequestParamsAggregated, PostMonitor, TagRequestParams, IdRequestParams, SearchAccountsRequest, PostMonitorEdit
+from ibex_models import  Post, Annotations, TextForAnnotation, Monitor, Platform, Account, SearchTerm, CollectAction, CollectTask, Labels
+from model import RequestPostsFilters, RequestAnnotations, RequestPostsFiltersAggregated, RequestMonitor, RequestTag, RequestId, RequestAccountsSearch, RequestMonitorEdit, RequestAddTagToPost
 from beanie.odm.operators.find.comparison import In
 
 from bson import json_util, ObjectId
@@ -16,11 +17,13 @@ from bson.json_util import dumps, loads
 from pydantic import Field, BaseModel, validator
 
 import json 
+import pandas as pd
 
 from fastapi import FastAPI, Request, Depends
 from fastapi.responses import JSONResponse, RedirectResponse
 from fastapi.encoders import jsonable_encoder
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import StreamingResponse
 import os
 import subprocess
 
@@ -69,7 +72,7 @@ app.add_middleware(
 app.add_middleware(SessionMiddleware, secret_key='SECRET_KEY')
 
 # @staticmethod
-def generate_search_criteria(post_request_params: PostRequestParams):
+def generate_search_criteria(post_request_params: RequestPostsFilters):
     search_criteria = {
         # 'created_at': { '$gte': post_request_params.time_interval_from, '$lte': post_request_params.time_interval_to},
     }
@@ -106,9 +109,9 @@ def generate_search_criteria(post_request_params: PostRequestParams):
 
 async def mongo(classes, request):
     sub_domain = request.url._url.split('.ibex-app.com')[0].split('//')[1]
+    sub_domain = sub_domain if sub_domain in ['dev', 'un', 'isfed'] else 'dev'
     mongodb_connection_string = os.getenv(f'MONGO_CS_{sub_domain.upper()}')
 
-    mongodb_connection_string = os.getenv('MONGO_CS')
     client = motor.motor_asyncio.AsyncIOMotorClient(mongodb_connection_string)
     await init_beanie(database=client.ibex, document_models=classes)
 
@@ -119,9 +122,8 @@ def json_responce(result):
 
 
 @app.post("/posts", response_description="Get list of posts", response_model=List[Post])
-async def posts(request: Request, post_request_params: PostRequestParams, current_email: str = Depends(get_current_user_email)) -> List[Post]:
+async def posts(request: Request, post_request_params: RequestPostsFilters, current_email: str = Depends(get_current_user_email)) -> List[Post]:
     await mongo([Post], request)
-    # return json_responce({'is': 'ok'})
     search_criteria = generate_search_criteria(post_request_params)
 
     result = await Post.find(search_criteria)\
@@ -170,15 +172,70 @@ async def posts(request: Request, post_request_params: PostRequestParams, curren
 
     for result_ in result:
         result_['api_dump'] = ''
-        # for result_key in result_.keys():
-        #     if type(result_[result_key]) == float:
-        #         result_[result_key] = 'NN'
         
     return json_responce(result)
 
 
+@app.post("/download_posts", response_description="Get csv file of posts")
+async def download_posts(request: Request, post_request_params:RequestPostsFilters):
+    await mongo([Post], request)
+    search_criteria = generate_search_criteria(post_request_params)
+
+    posts = await Post.find(search_criteria)\
+        .aggregate([
+            {   '$sort': { 'created_at': -1 }},
+            {
+                '$skip': post_request_params.start_index
+            },
+            {
+                '$limit': post_request_params.count
+            },
+            {
+                '$lookup': {
+                        'from': "tags",
+                        'localField': "labels.topics",
+                        'foreignField': "_id",
+                        'as': "labels.topics"
+                    }
+            },
+            {
+                '$lookup': {
+                        'from': "tags",
+                        'localField': "labels.locations",
+                        'foreignField': "_id",
+                        'as': "labels.locations"
+                    }
+            },
+            {
+                '$lookup': {
+                        'from': "tags",
+                        'localField': "labels.persons",
+                        'foreignField': "_id",
+                        'as': "labels.persons"
+                    }
+            },
+            {
+                '$lookup': {
+                    'from': "accounts",
+                    'localField': f"account_id",
+                    'foreignField': "_id",
+                    'as': "account"
+                }
+            },
+        ])\
+        .to_list()
+
+    for result_ in posts:
+        result_['api_dump'] = ''
+    
+    posts_df = pd.DataFrame([o.__dict__ for o in posts])
+    path = f'/root/frontend/build/{post_request_params.monitor_id}.csv'
+    posts_df.to_csv(path, index=None)
+    return JSONResponse(content=jsonable_encoder({'file_location': path}), status_code=200)
+    
+
 @app.post("/posts_aggregated", response_description="Get aggregated data for posts")#, response_model=List[Post])
-async def posts_aggregated(request: Request, post_request_params_aggregated: PostRequestParamsAggregated, current_email: str = Depends(get_current_user_email)):
+async def posts_aggregated(request: Request, post_request_params_aggregated: RequestPostsFiltersAggregated, current_email: str = Depends(get_current_user_email)):
     
     await mongo([Post], request)
     
@@ -246,7 +303,7 @@ async def posts_aggregated(request: Request, post_request_params_aggregated: Pos
 
 
 @app.post("/post", response_description="Get post details")
-async def post(request: Request, postRequestParamsSinge: IdRequestParams, current_email: str = Depends(get_current_user_email)) -> Post:
+async def post(request: Request, postRequestParamsSinge: RequestId, current_email: str = Depends(get_current_user_email)) -> Post:
     await mongo([Post], request)
     id_ = loads(f'{{"$oid":"{postRequestParamsSinge.id}"}}')
 
@@ -255,8 +312,19 @@ async def post(request: Request, postRequestParamsSinge: IdRequestParams, curren
     return JSONResponse(content=jsonable_encoder(post), status_code=200)
 
 
+@app.post("/add_tag_to_post", response_description="Updated post is returned")
+async def add_tag_to_post(request: Request, requestAddTagToPost: RequestAddTagToPost, current_email: str = Depends(get_current_user_email)) -> bool:
+    await mongo([Post], request)
+    post = await Post.get(requestAddTagToPost.id)
+    post.labels = getattr(post, 'labels', Labels())
+    post.labels.manual_tags = getattr(post.labels, 'manual_tags', [])
+    post.labels.manual_tags += requestAddTagToPost.tags
+    await post.save()
+    return True
+
+
 @app.post("/create_monitor", response_description="Create monitor")
-async def create_monitor(request: Request, postMonitor: PostMonitor, current_email: str = Depends(get_current_user_email)) -> Monitor:
+async def create_monitor(request: Request, postMonitor: RequestMonitor, current_email: str = Depends(get_current_user_email)) -> Monitor:
     await mongo([Monitor, Account, SearchTerm, CollectAction], request)
 
     monitor = Monitor(
@@ -267,18 +335,22 @@ async def create_monitor(request: Request, postMonitor: PostMonitor, current_ema
         date_to=postMonitor.date_to
     )
     # print(monitor.id, type(monitor.id), type(str(monitor.id)))
-    search_terms = [SearchTerm(
-            term=search_term, 
-            tags=[str(monitor.id)]
-        ) for search_term in postMonitor.search_terms]
-
-    accounts = [Account(
-            title = account.title, 
-            platform = account.platform, 
-            platform_id = account.platform_id, 
-            tags = [str(monitor.id)],
-            url=''
-        ) for account in postMonitor.accounts]
+    search_terms = []
+    if postMonitor.search_terms:
+        search_terms = [SearchTerm(
+                term=search_term, 
+                tags=[str(monitor.id)]
+            ) for search_term in postMonitor.search_terms]
+    
+    accounts = []
+    if postMonitor.accounts:
+        accounts = [Account(
+                title = account.title, 
+                platform = account.platform, 
+                platform_id = account.platform_id, 
+                tags = [str(monitor.id)],
+                url=''
+            ) for account in postMonitor.accounts]
     
     platforms = postMonitor.platforms if postMonitor.platforms and len(postMonitor.platforms) else [account.platform for account in postMonitor.accounts]
     
@@ -302,18 +374,26 @@ async def create_monitor(request: Request, postMonitor: PostMonitor, current_ema
 
 
 @app.post("/update_monitor", response_description="Create monitor")
-async def update_monitor(request: Request, postMonitor: PostMonitorEdit) -> Monitor:
+async def update_monitor(request: Request, postMonitor: RequestMonitorEdit) -> Monitor:
     # the method modifies the monitor in databes and related records
-    await mongo([Monitor, Account, SearchTerm, CollectAction], request)
+    await mongo([Monitor, Account, SearchTerm, CollectAction, Post, CollectTask], request)
+    print(type(postMonitor.id))
+    await CollectTask.find(CollectTask.monitor_id == postMonitor.id).delete()
+    await Post.find(In(Post.monitor_ids, [postMonitor.id])).delete()
+    
     monitor = await Monitor.get(postMonitor.id)
 
     # if date_from and date_to exists in postMonitor, it is updated
     if postMonitor.date_from: monitor.date_from = postMonitor.date_from
     if postMonitor.date_to: monitor.date_to = postMonitor.date_to
+    
+    if postMonitor.search_terms:
+        await modify_monitor_search_terms(postMonitor)
+    if postMonitor.accounts:
+        await modify_monitor_accounts(postMonitor)
 
-    await modify_monitor_search_terms(postMonitor)
-    await modify_monitor_accounts(postMonitor)
-
+    await monitor.save()
+    collect_sample_cmd(postMonitor.id)
     # if platforms are passed, it needs to be compared to existing list and
     # and if changes are made, existing records needs to be modified
     # platforms: Optional[List[Platform]]
@@ -322,41 +402,52 @@ async def update_monitor(request: Request, postMonitor: PostMonitorEdit) -> Moni
     # and if changes are made, existing records needs to be modified
     # languages: Optional[List[str]]
 
+def print_(lll):
+    print([i if type(i) == str else i.term for i in lll])
 
 async def modify_monitor_search_terms(postMonitor):
     # if search terms are passed, it needs to be compared to existing list and
     # and if changes are made, existing records needs to be modified
     # finding search terms in db which are no longer preseng in the post request
-    db_search_terms: List[SearchTerm] = await SearchTerm.find(In(SearchTerm.tags, [postMonitor.id])).to_list()
+    print(postMonitor)
+    db_search_terms: List[SearchTerm] = await SearchTerm.find(In(SearchTerm.tags, [str(postMonitor.id)])).to_list()
     db_search_terms_to_to_remove_from_db: List[SearchTerm] = [search_term for search_term in db_search_terms if
-                                                              search_term not in postMonitor.search_terms]
-
+                                                              search_term.term not in postMonitor.search_terms]
+    print('passed_search_terms:')
+    print_(postMonitor.search_terms)
+    print('db_search_terms:')
+    print_(db_search_terms)
+    print('db_search_terms_to_to_remove_from_db:')
+    print_(db_search_terms_to_to_remove_from_db)
     for search_term in db_search_terms_to_to_remove_from_db:
-        search_term.tags = [tag for tag in search_term.tags if tag != postMonitor.id]
+        search_term.tags = [tag for tag in search_term.tags if tag != str(postMonitor.id)]
         await search_term.save()
 
     # finding search terms that are not taged in db
     db_search_terms_strs: List[str] = [search_term.term for search_term in db_search_terms]
     search_terms_to_add_to_db: List[str] = [search_term for search_term in postMonitor.search_terms if
                                             search_term not in db_search_terms_strs]
-
+    print(f'db_search_terms_strs: {db_search_terms_strs}')
+    print('search_terms_to_add_to_db:')
+    print_(search_terms_to_add_to_db)
     searchs_to_insert = []
     for search_term_str in search_terms_to_add_to_db:
         db_search_term = await SearchTerm.find(SearchTerm.term == search_term_str).to_list()
-        if db_search_term[0]:
+        if len(db_search_term) > 0:
             # If same keyword exists in db, monitor.id is added to it's tags list
             db_search_term[0].tags.append(str(postMonitor.id))
             await db_search_term[0].save()
         else:
             # If keyword does not exists in db, new keyword is created
             searchs_to_insert.append(SearchTerm(term=search_term_str, tags=[str(postMonitor.id)]))
+
     if len(searchs_to_insert): await SearchTerm.insert_many(searchs_to_insert)
 
 
 async def modify_monitor_accounts(postMonitor):
     # if accounts are passed, it needs to be compared to existing list and
     # and if changes are made, existing records needs to be modified
-    # accounts: List[AccountReques]
+    # accounts: List[RequestAccount]
     db_accounts: List[SearchTerm] = await Account.find(In(Account.tags, [postMonitor.id])).to_list()
     account_not_in_monitor = lambda db_account: len(
         [account for account in postMonitor.accounts if account == db_account.id]) == 0
@@ -378,14 +469,16 @@ async def modify_monitor_accounts(postMonitor):
 
 
 @app.post("/collect_sample", response_description="Run sample collection pipeline")
-async def collect_sample(request: Request, monitor_id: IdRequestParams, current_email: str = Depends(get_current_user_email)):
-    cmd = f'python3 /root/data-collection-and-processing/main.py --monitor_id={monitor_id.id} --sample=True >> api.out'
+async def collect_sample(request: Request, monitor_id: RequestId, current_email: str = Depends(get_current_user_email)):
+    collect_sample_cmd(monitor_id.id)
+
+def collect_sample_cmd(monitor_id:str):
+    cmd = f'python3 /root/data-collection-and-processing/main.py --monitor_id={monitor_id} --sample=True >> api.out'
     subprocess.Popen(cmd, stdout=None, stderr=None, stdin=None, close_fds=True, shell=True)
-    # os.popen(cmd).read()
 
 
 @app.post("/get_hits_count", response_description="Get amount of post for monitor")
-async def get_hits_count(request: Request, postRequestParamsSinge: IdRequestParams, current_email: str = Depends(get_current_user_email)):
+async def get_hits_count(request: Request, postRequestParamsSinge: RequestId, current_email: str = Depends(get_current_user_email)):
     await mongo([CollectTask], request)
 
     collect_tasks = await CollectTask.find(CollectTask.monitor_id == UUID(postRequestParamsSinge.id)).to_list()
@@ -393,21 +486,31 @@ async def get_hits_count(request: Request, postRequestParamsSinge: IdRequestPara
     # for platform in Platform:
     #     counts[platform] = sum([collect_task.hits_count or 0 for collect_task in collect_tasks if collect_task.platform == platform])
     from itertools import groupby
-    getTerm = lambda collect_task: collect_task.search_terms[0].term
+    import numbers
 
+    getTerm = lambda collect_task: collect_task.search_terms[0].term
+    getTottal = lambda search_term_counts: sum([i for i in search_term_counts.values() if isinstance(i,  numbers.Number)])
+
+    grouped = {}
+    for collect_task in collect_tasks:
+        term = getTerm(collect_task)
+        if term not in grouped: grouped[term] = []
+        grouped[term].append(collect_task) 
 
     terms_with_counts = { 'search_terms': [] }
-    for _name, _list in groupby(sorted(collect_tasks, key=getTerm), key=getTerm):
+    for search_term, collect_tasks in grouped.items():
         term_counts = {}
-        term_counts['search_term'] = _name
-        for item in _list:
-            term_counts[item.platform] = item.hits_count
+        term_counts['search_term'] = search_term
+        for collect_task in collect_tasks:
+            term_counts[collect_task.platform] = collect_task.hits_count
         terms_with_counts['search_terms'].append(term_counts)
+
+    terms_with_counts['search_terms'] = sorted(terms_with_counts['search_terms'], key=getTottal)
     return JSONResponse(content=jsonable_encoder(terms_with_counts), status_code=200)
 
     
 @app.post("/get_monitor", response_description="Get monitor")
-async def search_account(request: Request, monitor_id: IdRequestParams, current_email: str = Depends(get_current_user_email)):
+async def search_account(request: Request, monitor_id: RequestId, current_email: str = Depends(get_current_user_email)):
     await mongo([Monitor, SearchTerm, Account], request)
     monitor = await Monitor.get(monitor_id.id)
     search_terms = await SearchTerm.find(In(SearchTerm.tags, [monitor_id.id])).to_list()
@@ -416,7 +519,7 @@ async def search_account(request: Request, monitor_id: IdRequestParams, current_
 
 
 @app.post("/get_monitors", response_description="Get monitors")
-async def get_monitors(request: Request, post_tag: TagRequestParams, current_email: str = Depends(get_current_user_email)) -> Monitor:
+async def get_monitors(request: Request, post_tag: RequestTag, current_email: str = Depends(get_current_user_email)) -> Monitor:
     await mongo([Monitor], request)
     if post_tag.tag == '*':
         monitor = await Monitor.find().to_list()
@@ -427,15 +530,17 @@ async def get_monitors(request: Request, post_tag: TagRequestParams, current_ema
 
 
 @app.post("/search_account", response_description="Search accounts by string across all platforms")
-async def search_account(request: Request, search_accounts: SearchAccountsRequest, current_email: str = Depends(get_current_user_email)):
+async def search_account(request: Request, search_accounts: RequestAccountsSearch, current_email: str = Depends(get_current_user_email)):
     await mongo([Account], request)
     accounts: List[Account] = []
     for platform in collector_classes:
-        if platform in [Platform.facebook, Platform.telegram, Platform.vkontakte]: continue
+        # if platform in [Platform.facebook]: continue
         data_source = collector_classes[platform]()
         accounts_from_platform: List[Account] = await data_source.get_accounts(search_accounts.substring)
         accounts += accounts_from_platform[:3]
-    
+    for account in accounts:
+        account.label = account.title
+        account.icon = account.platform
     return JSONResponse(content=jsonable_encoder(accounts), status_code=200)
 
 

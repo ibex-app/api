@@ -6,7 +6,7 @@ from uuid import UUID, uuid4
 from datetime import datetime
 from ibex_models import Platform, Annotation
 
-class PostRequestParams(BaseModel):
+class RequestPostsFilters(BaseModel):
     time_interval_from: Optional[str]
     time_interval_to: Optional[str]
     has_video:Optional[bool]
@@ -25,8 +25,8 @@ class PostRequestParams(BaseModel):
     start_index: int = 0
 
 
-class PostRequestParamsAggregated(BaseModel):
-    post_request_params: PostRequestParams
+class RequestPostsFiltersAggregated(BaseModel):
+    post_request_params: RequestPostsFilters
     axisX: Optional[str]
     axisY: Optional[str]
     axisZ: Optional[str]
@@ -37,36 +37,40 @@ class RequestAnnotations(BaseModel):
     user_mail: str
     annotations: Optional[List[Annotation]]
 
-class IdRequestParams(BaseModel):
+class RequestId(BaseModel):
     id: str
 
-class TagRequestParams(BaseModel):
+class RequestTag(BaseModel):
     tag: str
 
-class SearchAccountsRequest(BaseModel):
+class RequestAccountsSearch(BaseModel):
     substring: str
     platforms: List[Platform]
 
-class AccountReques(BaseModel):
+class RequestAccount(BaseModel):
     title: str
     platform: Platform
     platform_id: str
 
-class PostMonitor(BaseModel):
+class RequestMonitor(BaseModel):
     title: str
     descr: str
     date_from: datetime
     date_to: Optional[datetime]
     search_terms: List[str]
-    accounts: List[AccountReques]
+    accounts: Optional[List[RequestAccount]]
     platforms: Optional[List[Platform]]
     languages: Optional[List[str]]
 
-class PostMonitorEdit(BaseModel):
+class RequestMonitorEdit(BaseModel):
     id: UUID
     date_from: Optional[datetime]
     date_to: Optional[datetime]
-    search_terms: List[str]
-    accounts: List[AccountReques]
+    search_terms: Optional[List[str]]
+    accounts: Optional[List[RequestAccount]]
     platforms: Optional[List[Platform]]
     languages: Optional[List[str]]
+
+class RequestAddTagToPost(BaseModel):
+    id: UUID
+    tags: List[str]
