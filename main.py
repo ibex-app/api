@@ -376,7 +376,7 @@ async def create_monitor(request: Request, postMonitor: RequestMonitor, current_
 @app.post("/update_monitor", response_description="Create monitor")
 async def update_monitor(request: Request, postMonitor: RequestMonitorEdit) -> Monitor:
     # the method modifies the monitor in databes and related records
-    await mongo([Monitor, Account, SearchTerm, CollectAction, Post], request)
+    await mongo([Monitor, Account, SearchTerm, CollectAction, Post, CollectTask], request)
     print(type(postMonitor.id))
     await CollectTask.find(CollectTask.monitor_id == postMonitor.id).delete()
     await Post.find(In(Post.monitor_ids, [postMonitor.id])).delete()
@@ -402,19 +402,25 @@ async def update_monitor(request: Request, postMonitor: RequestMonitorEdit) -> M
     # and if changes are made, existing records needs to be modified
     # languages: Optional[List[str]]
 
+def print_(lll):
+    print([i if type(i) == str else i.term for i in lll])
 
 async def modify_monitor_search_terms(postMonitor):
     # if search terms are passed, it needs to be compared to existing list and
     # and if changes are made, existing records needs to be modified
     # finding search terms in db which are no longer preseng in the post request
-    db_search_terms: List[SearchTerm] = await SearchTerm.find(In(SearchTerm.tags, [postMonitor.id])).to_list()
+    print(postMonitor)
+    db_search_terms: List[SearchTerm] = await SearchTerm.find(In(SearchTerm.tags, [str(postMonitor.id)])).to_list()
     db_search_terms_to_to_remove_from_db: List[SearchTerm] = [search_term for search_term in db_search_terms if
-                                                              search_term not in postMonitor.search_terms]
-    
-    print(f'db_search_terms: {db_search_terms}')
-    print(f'db_search_terms_to_to_remove_from_db: {db_search_terms_to_to_remove_from_db}')
+                                                              search_term.term not in postMonitor.search_terms]
+    print('passed_search_terms:')
+    print_(postMonitor.search_terms)
+    print('db_search_terms:')
+    print_(db_search_terms)
+    print('db_search_terms_to_to_remove_from_db:')
+    print_(db_search_terms_to_to_remove_from_db)
     for search_term in db_search_terms_to_to_remove_from_db:
-        search_term.tags = [tag for tag in search_term.tags if tag != postMonitor.id]
+        search_term.tags = [tag for tag in search_term.tags if tag != str(postMonitor.id)]
         await search_term.save()
 
     # finding search terms that are not taged in db
@@ -422,11 +428,12 @@ async def modify_monitor_search_terms(postMonitor):
     search_terms_to_add_to_db: List[str] = [search_term for search_term in postMonitor.search_terms if
                                             search_term not in db_search_terms_strs]
     print(f'db_search_terms_strs: {db_search_terms_strs}')
-    print(f'search_terms_to_add_to_db: {search_terms_to_add_to_db}')
+    print('search_terms_to_add_to_db:')
+    print_(search_terms_to_add_to_db)
     searchs_to_insert = []
     for search_term_str in search_terms_to_add_to_db:
         db_search_term = await SearchTerm.find(SearchTerm.term == search_term_str).to_list()
-        if db_search_term[0]:
+        if len(db_search_term) > 0:
             # If same keyword exists in db, monitor.id is added to it's tags list
             db_search_term[0].tags.append(str(postMonitor.id))
             await db_search_term[0].save()
@@ -479,19 +486,27 @@ async def get_hits_count(request: Request, postRequestParamsSinge: RequestId, cu
     # for platform in Platform:
     #     counts[platform] = sum([collect_task.hits_count or 0 for collect_task in collect_tasks if collect_task.platform == platform])
     from itertools import groupby
+    import numbers
+
     getTerm = lambda collect_task: collect_task.search_terms[0].term
     getTottal = lambda search_term_counts: sum([i for i in search_term_counts.values() if isinstance(i,  numbers.Number)])
 
+    grouped = {}
+    for collect_task in collect_tasks:
+        term = getTerm(collect_task)
+        if term not in grouped: grouped[term] = []
+        grouped[term].append(collect_task) 
+
     terms_with_counts = { 'search_terms': [] }
-    for _name, _list in groupby(collect_tasks, key=getTerm):
+    for search_term, collect_tasks in grouped.items():
         term_counts = {}
-        term_counts['search_term'] = _name
-        for item in _list:
-            term_counts[item.platform] = item.hits_count
+        term_counts['search_term'] = search_term
+        for collect_task in collect_tasks:
+            term_counts[collect_task.platform] = collect_task.hits_count
         terms_with_counts['search_terms'].append(term_counts)
 
-    sorted_terms = sorted(terms_with_counts['search_terms'], key=getTottal)
-    return JSONResponse(content=jsonable_encoder(sorted_terms), status_code=200)
+    terms_with_counts['search_terms'] = sorted(terms_with_counts['search_terms'], key=getTottal)
+    return JSONResponse(content=jsonable_encoder(terms_with_counts), status_code=200)
 
     
 @app.post("/get_monitor", response_description="Get monitor")
@@ -522,7 +537,6 @@ async def search_account(request: Request, search_accounts: RequestAccountsSearc
         # if platform in [Platform.facebook]: continue
         data_source = collector_classes[platform]()
         accounts_from_platform: List[Account] = await data_source.get_accounts(search_accounts.substring)
-        print('2222', platform, len(accounts_from_platform))
         accounts += accounts_from_platform[:3]
     for account in accounts:
         account.label = account.title
