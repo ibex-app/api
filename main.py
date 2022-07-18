@@ -6,9 +6,9 @@ import motor
 from bson.binary import Binary
 
 from datetime import datetime
-from uuid import UUID
+from uuid import UUID, uuid1
 from typing import List
-from ibex_models import  Post, Annotations, TextForAnnotation, Monitor, Platform, Account, SearchTerm, CollectAction, CollectTask, Labels
+from ibex_models import  Post, Annotations, TextForAnnotation, Monitor, Platform, Account, SearchTerm, CollectAction, CollectTask, Labels, CollectTaskStatus
 from model import RequestPostsFilters, RequestAnnotations, RequestPostsFiltersAggregated, RequestMonitor, RequestTag, RequestId, RequestAccountsSearch, RequestMonitorEdit, RequestAddTagToPost
 from beanie.odm.operators.find.comparison import In
 
@@ -69,7 +69,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
     
-app.add_middleware(SessionMiddleware, secret_key='SECRET_KEY')
+app.add_middleware(SessionMiddleware, secret_key='_SECRET_KEY_')
 
 # @staticmethod
 def generate_search_criteria(post_request_params: RequestPostsFilters):
@@ -123,7 +123,7 @@ def json_responce(result):
 
 @app.post("/posts", response_description="Get list of posts", response_model=List[Post])
 async def posts(request: Request, post_request_params: RequestPostsFilters, current_email: str = Depends(get_current_user_email)) -> List[Post]:
-    await mongo([Post], request)
+    await mongo([Post, CollectTask], request)
     search_criteria = generate_search_criteria(post_request_params)
 
     result = await Post.find(search_criteria)\
@@ -172,8 +172,19 @@ async def posts(request: Request, post_request_params: RequestPostsFilters, curr
 
     for result_ in result:
         result_['api_dump'] = ''
-        
-    return json_responce(result)
+
+    non_finalized_collect_tasks_count = await CollectTask\
+        .find(CollectTask.monitor_id == post_request_params.monitor_id \
+            and CollectTask.status != CollectTaskStatus.finalized)\
+        .count()
+
+    is_loading = non_finalized_collect_tasks_count > 0
+    
+    responce = {
+        'posts': result,
+        'is_loading': is_loading
+    }
+    return json_responce(responce)
 
 
 @app.post("/download_posts", response_description="Get csv file of posts")
@@ -409,16 +420,16 @@ async def modify_monitor_search_terms(postMonitor):
     # if search terms are passed, it needs to be compared to existing list and
     # and if changes are made, existing records needs to be modified
     # finding search terms in db which are no longer preseng in the post request
-    print(postMonitor)
+    # print(postMonitor)
     db_search_terms: List[SearchTerm] = await SearchTerm.find(In(SearchTerm.tags, [str(postMonitor.id)])).to_list()
     db_search_terms_to_to_remove_from_db: List[SearchTerm] = [search_term for search_term in db_search_terms if
                                                               search_term.term not in postMonitor.search_terms]
-    print('passed_search_terms:')
-    print_(postMonitor.search_terms)
-    print('db_search_terms:')
-    print_(db_search_terms)
-    print('db_search_terms_to_to_remove_from_db:')
-    print_(db_search_terms_to_to_remove_from_db)
+    # print('passed_search_terms:')
+    # print_(postMonitor.search_terms)
+    # print('db_search_terms:')
+    # print_(db_search_terms)
+    # print('db_search_terms_to_to_remove_from_db:')
+    # print_(db_search_terms_to_to_remove_from_db)
     for search_term in db_search_terms_to_to_remove_from_db:
         search_term.tags = [tag for tag in search_term.tags if tag != str(postMonitor.id)]
         await search_term.save()
@@ -427,9 +438,9 @@ async def modify_monitor_search_terms(postMonitor):
     db_search_terms_strs: List[str] = [search_term.term for search_term in db_search_terms]
     search_terms_to_add_to_db: List[str] = [search_term for search_term in postMonitor.search_terms if
                                             search_term not in db_search_terms_strs]
-    print(f'db_search_terms_strs: {db_search_terms_strs}')
-    print('search_terms_to_add_to_db:')
-    print_(search_terms_to_add_to_db)
+    # print(f'db_search_terms_strs: {db_search_terms_strs}')
+    # print('search_terms_to_add_to_db:')
+    # print_(search_terms_to_add_to_db)
     searchs_to_insert = []
     for search_term_str in search_terms_to_add_to_db:
         db_search_term = await SearchTerm.find(SearchTerm.term == search_term_str).to_list()
@@ -545,16 +556,20 @@ async def search_account(request: Request, search_accounts: RequestAccountsSearc
 
 
 @app.post("/save_and_next", response_description="Save the annotations for the text and return new text for annotation", response_model=TextForAnnotation)
-async def save_and_next(request: Request, request_annotations: RequestAnnotations) -> TextForAnnotation:
+async def save_and_next(request: Request, request_annotations: RequestAnnotations, current_email: str = Depends(get_current_user_email)) -> TextForAnnotation:
     await mongo([Annotations, TextForAnnotation], request)
     
-    annotations = Annotations(text_id = request_annotations.text_id, user_mail = request_annotations.user_mail, annotations = request_annotations.annotations)
-
-    await annotations.insert()
+    if request_annotations.text_id:
+        annotations = Annotations(text_id = request_annotations.text_id, user_mail = current_email, annotations = request_annotations.annotations)
+        # print('inserting annotation', annotations)
+        await annotations.insert()
 
     already_annotated = await Annotations.aggregate([
-        {"$match": { "user_mail": { "$eq": 'djanezashvili@gmail.com' }}}
+        {"$match": { "user_mail": { "$eq": current_email }}}
     ]).to_list()
+
+    # print('already', len(already_annotated))
+    
     annotated_text_ids = [annotations["text_id"]  for annotations in already_annotated]
 
     text_for_annotation = await TextForAnnotation.aggregate([
@@ -568,6 +583,12 @@ async def save_and_next(request: Request, request_annotations: RequestAnnotation
                     "as": "annotations_"
                 }
         }, 
+        {
+            "$project":
+            {
+                "annotations_": { "$cond" : [ { "$eq" : [ "$annotations_", [] ] }, [ { "tag_id": 0, "label": "", "words": [], "labelGrup": ""} ], '$annotations_' ] }
+            }
+        },
         {"$unwind": "$annotations_"},
         {"$group" : {"_id":"$_id", "count":{"$sum":1}}},
         {"$match": { "count": { "$lt": 4 }}},
@@ -583,7 +604,12 @@ async def save_and_next(request: Request, request_annotations: RequestAnnotation
         },
         {"$unwind": "$text"},
     ]).to_list()
-
+    
+    # print(len(text_for_annotation))
+    # print(text_for_annotation)
+    if len(text_for_annotation) == 0:
+        return TextForAnnotation(id=uuid1(), words=[])
+    
     text_for_annotation = TextForAnnotation(id=text_for_annotation[0]["_id"], post_id = text_for_annotation[0]["text"]["post_id"], words=text_for_annotation[0]["text"]["words"])
     return text_for_annotation
 
@@ -594,21 +620,28 @@ async def login(request: Request):
     host = 'https://dev.ibex-app.com/' if env == 'dev' else request.headers['referer'].rstrip('login')
     redirect_uri = f'{host}api/token?env={env}'
     redirect = await oauth.google.authorize_redirect(request, redirect_uri)
+    
+    # print(0, redirect_uri)
+
+    # print(1111, redirect.__dict__)
     return redirect
 
 
 @app.route('/token')
 async def auth(request: Request):
     sub_domain = request.url._url.split('.ibex-app.com')[0].split('//')[1]
-
+    # print(222, request.session)
+    # print(333, request.__dict__)
+    # print(444, request.url._url)
     try:
         access_token = await oauth.google.authorize_access_token(request)
     except OAuthError as err:
+        print(str(err))
         raise CREDENTIALS_EXCEPTION
 
     user_data = await oauth.google.parse_id_token(access_token, access_token['userinfo']['nonce'])
     valid_accounts = os.environ.get('VALID_ACCOUNTS').split('__SEP__')
-    if user_data['email'] in valid_accounts:
+    if user_data['email'] in valid_accounts or sub_domain == 'tag':
         obj_ = {
             'result': True,
             'access_token': create_token(user_data['email']).decode("utf-8") ,
@@ -616,7 +649,7 @@ async def auth(request: Request):
         }
         return_url = 'http://localhost:3000' if request.query_params['env'] == 'dev' else f'https://{sub_domain}.ibex-app.com'
         return RedirectResponse(url=f"{return_url}?access_token={obj_['access_token']}&user={user_data['email']}")
-
+    print('no email')
     raise CREDENTIALS_EXCEPTION
 
 # create_monitor, update_monitor, get_monitors, collect_sample, get_hits_count, search_account

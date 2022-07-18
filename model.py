@@ -33,8 +33,7 @@ class RequestPostsFiltersAggregated(BaseModel):
     days: Optional[int]
 
 class RequestAnnotations(BaseModel):
-    text_id: UUID
-    user_mail: str
+    text_id: Optional[UUID]
     annotations: Optional[List[Annotation]]
 
 class RequestId(BaseModel):
