@@ -110,7 +110,7 @@ def generate_search_criteria(post_request_params: RequestPostsFilters):
 async def mongo(classes, request):
     sub_domain = request.url._url.split('.ibex-app.com')[0].split('//')[1]
     sub_domain = sub_domain if sub_domain in ['dev', 'un', 'isfed'] else 'dev'
-    mongodb_connection_string = os.getenv(f'MONGO_CS_{sub_domain.upper()}')
+    mongodb_connection_string = os.getenv(f'MONGO_CS')
 
     client = motor.motor_asyncio.AsyncIOMotorClient(mongodb_connection_string)
     await init_beanie(database=client.ibex, document_models=classes)
