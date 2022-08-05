@@ -492,7 +492,7 @@ def collect_sample_cmd(monitor_id:str):
 async def get_hits_count(request: Request, postRequestParamsSinge: RequestId, current_email: str = Depends(get_current_user_email)):
     await mongo([CollectTask], request)
 
-    collect_tasks = await CollectTask.find(CollectTask.monitor_id == UUID(postRequestParamsSinge.id)).to_list()
+    collect_tasks = await CollectTask.find(CollectTask.monitor_id == UUID(postRequestParamsSinge.id), CollectTask.get_hits_count == True).to_list()
     # counts = {} 
     # for platform in Platform:
     #     counts[platform] = sum([collect_task.hits_count or 0 for collect_task in collect_tasks if collect_task.platform == platform])
@@ -549,10 +549,15 @@ async def search_account(request: Request, search_accounts: RequestAccountsSearc
         data_source = collector_classes[platform]()
         accounts_from_platform: List[Account] = await data_source.get_accounts(search_accounts.substring)
         accounts += accounts_from_platform[:3]
+    responce = []
     for account in accounts:
-        account.label = account.title
-        account.icon = account.platform
-    return JSONResponse(content=jsonable_encoder(accounts), status_code=200)
+        responce.append({
+            'label': account.title,
+            'icon': account.platform,
+            'platform_id': account.platform_id,
+            'platform': account.platform
+        })
+    return JSONResponse(content=jsonable_encoder(responce), status_code=200)
 
 
 @app.post("/save_and_next", response_description="Save the annotations for the text and return new text for annotation", response_model=TextForAnnotation)
@@ -567,8 +572,6 @@ async def save_and_next(request: Request, request_annotations: RequestAnnotation
     already_annotated = await Annotations.aggregate([
         {"$match": { "user_mail": { "$eq": current_email }}}
     ]).to_list()
-
-    # print('already', len(already_annotated))
     
     annotated_text_ids = [annotations["text_id"]  for annotations in already_annotated]
 
