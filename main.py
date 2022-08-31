@@ -1,3 +1,4 @@
+from platform import platform
 from tkinter import Label
 from turtle import st
 from beanie import init_beanie
@@ -378,6 +379,10 @@ async def create_monitor(request: Request, postMonitor: RequestMonitor, current_
 
     if len(search_terms): await SearchTerm.insert_many(search_terms)
     if len(accounts): await Account.insert_many(accounts)
+
+    print(f'Inserting {len(collect_actions)} collect actions...')
+    print(f'Monitor id {monitor.id}')
+    
     await CollectAction.insert_many(collect_actions)
     await monitor.save()
 
@@ -522,11 +527,15 @@ async def get_hits_count(request: Request, postRequestParamsSinge: RequestId, cu
     
 @app.post("/get_monitor", response_description="Get monitor")
 async def search_account(request: Request, monitor_id: RequestId, current_email: str = Depends(get_current_user_email)):
-    await mongo([Monitor, SearchTerm, Account], request)
+    await mongo([Monitor, SearchTerm, Account, CollectAction], request)
+    
     monitor = await Monitor.get(monitor_id.id)
     search_terms = await SearchTerm.find(In(SearchTerm.tags, [monitor_id.id])).to_list()
     accounts = await Account.find(In(SearchTerm.tags, [monitor_id.id])).to_list()
-    return { 'monitor': monitor, 'search_terms': search_terms, 'accounts': accounts }
+    collect_actions = await CollectAction.find(CollectAction.monitor_id == UUID(monitor_id.id)).to_list()
+    platforms = set([collect_action.platform for collect_action in collect_actions])
+
+    return { 'monitor': monitor, 'search_terms': search_terms, 'accounts': accounts, 'platforms': platforms }
 
 
 @app.post("/get_monitors", response_description="Get monitors")
