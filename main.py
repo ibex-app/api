@@ -633,11 +633,25 @@ async def save_and_next(request: Request, request_annotations: RequestAnnotation
 nltk.download('stopwords')
 stop_words = set(stopwords.words('russian'))
 e_stop_words = set(stopwords.words('english'))
-
 stop_words.update(e_stop_words)
 
-@app.post("/recomendations", response_description="Get monitor")
-async def search_account(request: Request, monitor_id: RequestId, current_email: str = Depends(get_current_user_email)):
+import re
+
+async def get_keywords_in_monitor(monitor_id):
+    collect_tasks = await CollectTask.find(CollectTask.monitor_id == UUID(monitor_id)).to_list()
+    getTerm = lambda collect_task: None if not collect_task.search_terms else collect_task.search_terms[0].term
+    unique = set([getTerm(collect_task) for collect_task in collect_tasks])
+
+    keywords_already_in_monitor = []
+    for search_term in unique:
+        if not search_term: continue
+        keywords_already_in_monitor += re.split(' AND | OR | NOT ', search_term)
+
+    return list(set(keywords_already_in_monitor))
+        
+
+@app.post("/recommendations", response_description="Get monitor")
+async def recommendations(request: Request, monitor_id: RequestId, current_email: str = Depends(get_current_user_email)):
     await mongo([Monitor, Post], request)
     """
     :param: monitor_ids: Are ids taken from database. monitor_ids[0] is the id we want to search words for.
@@ -651,9 +665,10 @@ async def search_account(request: Request, monitor_id: RequestId, current_email:
     other_posts = await Post.find({ 'monitor_ids': {'$nin': [UUID(monitor_id.id)] }}).aggregate([{ '$sample': { 'size': sample_size } } ]).to_list()
     
     docs = [' '.join([post['text'] for post in monitor_posts]), ' '.join([post['text'] for post in other_posts])]
+    keywords_already_in_monitor = await get_keywords_in_monitor(monitor_id.id)
     
-    for stop_word in ["https","com","news","www","https www","twitter","youtube","facebook"]:
-        stop_words.add(stop_word)
+    for stop_word in keywords_already_in_monitor + ["https","com","news","www","https www","twitter","youtube","facebook", "ly","bit", "bit ly", "instagram", "channel", "http", "subscribe"]:
+        stop_words.add(stop_word.lower())
 
     vectorizer = TfidfVectorizer(stop_words=stop_words, ngram_range=(1, 2))
 
@@ -669,6 +684,10 @@ async def search_account(request: Request, monitor_id: RequestId, current_email:
 
     return JSONResponse(content=jsonable_encoder(words), status_code=200)
 
+
+@app.post("/monitor_progress", response_description="Get monitor")
+async def monitor_progress(request: Request, monitor_id: RequestId, current_email: str = Depends(get_current_user_email)):
+    pass
 
 @app.get('/login')
 async def login(request: Request):
