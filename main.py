@@ -40,6 +40,10 @@ from starlette.config import Config
 
 from app.core.datasources import collector_classes
 
+from sklearn.feature_extraction.text import TfidfVectorizer
+import nltk
+from nltk.corpus import stopwords
+
 # OAuth settings
 GOOGLE_CLIENT_ID = os.environ.get('GOOGLE_CLIENT_ID') or None
 GOOGLE_CLIENT_SECRET = os.environ.get('GOOGLE_CLIENT_SECRET') or None
@@ -488,6 +492,7 @@ async def modify_monitor_accounts(postMonitor):
 async def collect_sample(request: Request, monitor_id: RequestId, current_email: str = Depends(get_current_user_email)):
     collect_sample_cmd(monitor_id.id)
 
+
 def collect_sample_cmd(monitor_id:str):
     cmd = f'python3 /root/data-collection-and-processing/main.py --monitor_id={monitor_id} --sample=True >> api.out'
     subprocess.Popen(cmd, stdout=None, stderr=None, stdin=None, close_fds=True, shell=True)
@@ -495,7 +500,7 @@ def collect_sample_cmd(monitor_id:str):
 
 @app.post("/get_hits_count", response_description="Get amount of post for monitor")
 async def get_hits_count(request: Request, postRequestParamsSinge: RequestId, current_email: str = Depends(get_current_user_email)):
-    await mongo([CollectTask], request)
+    await mongo([CollectTask, SearchTerm, Account], request)
 
     collect_tasks = await CollectTask.find(CollectTask.monitor_id == UUID(postRequestParamsSinge.id), CollectTask.get_hits_count == True).to_list()
     # counts = {} 
@@ -625,6 +630,45 @@ async def save_and_next(request: Request, request_annotations: RequestAnnotation
     text_for_annotation = TextForAnnotation(id=text_for_annotation[0]["_id"], post_id = text_for_annotation[0]["text"]["post_id"], words=text_for_annotation[0]["text"]["words"])
     return text_for_annotation
 
+nltk.download('stopwords')
+stop_words = set(stopwords.words('russian'))
+e_stop_words = set(stopwords.words('english'))
+
+stop_words.update(e_stop_words)
+
+@app.post("/recomendations", response_description="Get monitor")
+async def search_account(request: Request, monitor_id: RequestId, current_email: str = Depends(get_current_user_email)):
+    await mongo([Monitor, Post], request)
+    """
+    :param: monitor_ids: Are ids taken from database. monitor_ids[0] is the id we want to search words for.
+    :return: Returns top 10 frequent words.
+    """
+    await mongo([Monitor, Post], request)
+
+    monitor_posts = await Post.find({ 'monitor_ids': {'$nin': [UUID(monitor_id.id)] }}).aggregate([{ '$sample': { 'size': 1500 } } ]).to_list()
+    sample_size = 500 if len(monitor_posts) < 500 else len(monitor_posts)
+    # sample_size = 100
+    other_posts = await Post.find({ 'monitor_ids': {'$nin': [UUID(monitor_id.id)] }}).aggregate([{ '$sample': { 'size': sample_size } } ]).to_list()
+    
+    docs = [' '.join([post['text'] for post in monitor_posts]), ' '.join([post['text'] for post in other_posts])]
+    
+    for stop_word in ["https","com","news","www","https www","twitter","youtube","facebook"]:
+        stop_words.add(stop_word)
+
+    vectorizer = TfidfVectorizer(stop_words=stop_words, ngram_range=(1, 2))
+
+    response = vectorizer.fit_transform(docs)
+    df_tfidf_sklearn = pd.DataFrame(response.toarray(), columns=vectorizer.get_feature_names())
+    monitor_tfidfs = df_tfidf_sklearn.iloc[0]
+    tokens = df_tfidf_sklearn.columns
+
+    tokens_with_tfidfs = []
+    for tf_idf, token in zip(monitor_tfidfs, tokens):
+        tokens_with_tfidfs.append((tf_idf, token))
+    words = sorted(tokens_with_tfidfs, reverse=True)[:10]
+
+    return JSONResponse(content=jsonable_encoder(words), status_code=200)
+
 
 @app.get('/login')
 async def login(request: Request):
@@ -663,24 +707,3 @@ async def auth(request: Request):
         return RedirectResponse(url=f"{return_url}?access_token={obj_['access_token']}&user={user_data['email']}")
     print('no email')
     raise CREDENTIALS_EXCEPTION
-
-# create_monitor, update_monitor, get_monitors, collect_sample, get_hits_count, search_account
-
-# curl -X 'POST' \
-#   'http://161.35.73.100:8888/create_monitor' \
-#   -H 'accept: application/json' \
-#   -H 'Content-Type: application/json' \
-#   -d '{  "title": "Testing Monitor api", "descr": "descr", "date_from": "2022-02-01T00:00:00.000Z", "search_terms": ["ზუგდიდი"], "platforms": ["facebook"], "accounts": [{"title": "title",  "platform_id": "platform_id", "platform": "facebook"}] }'
-
-
-# curl -X 'POST' \
-#   'http://161.35.73.100:8888/get_monitors' \
-#   -H 'accept: application/json' \
-#   -H 'Content-Type: application/json' \
-#   -d '{ "tag": "*"}'
-
-# curl -X 'POST' \
-#   'http://161.35.73.100:8888/collect_sample' \
-#   -H 'accept: application/json' \
-#   -H 'Content-Type: application/json' \
-#   -d '{ "id": "f06a6a87-7fb8-4a53-8c46-90accd89aa8c"}'
