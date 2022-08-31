@@ -681,7 +681,7 @@ async def recommendations(request: Request, monitor_id: RequestId, current_email
     for tf_idf, token in zip(monitor_tfidfs, tokens):
         tokens_with_tfidfs.append((tf_idf, token))
     words = sorted(tokens_with_tfidfs, reverse=True)[:10]
-
+    words = [word[1] for word in words]
     return JSONResponse(content=jsonable_encoder(words), status_code=200)
 
 
