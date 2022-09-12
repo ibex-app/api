@@ -18,7 +18,8 @@ class RequestPostsFilters(BaseModel):
     persons: List[str] = []
     locations: List[str] = []
     monitor_id: Optional[str]
-
+    search_terms: Optional[List[str]]
+    
     sort_by: Optional[str]
 
     count: int = 100 

@@ -77,11 +77,15 @@ app.add_middleware(
 app.add_middleware(SessionMiddleware, secret_key='_SECRET_KEY_')
 
 # @staticmethod
-def generate_search_criteria(post_request_params: RequestPostsFilters):
+async def generate_search_criteria(post_request_params: RequestPostsFilters):
     search_criteria = {
         # 'created_at': { '$gte': post_request_params.time_interval_from, '$lte': post_request_params.time_interval_to},
     }
-    
+
+    if bool(post_request_params.search_terms) and len(post_request_params.search_terms) > 0:
+        search_terms = await SearchTerm.find({'term': {'$in': post_request_params.search_terms}}).to_list()
+        search_criteria['search_terms_ids'] = { '$in': [search_term.id for search_term in search_terms] }
+
     if bool(post_request_params.monitor_id):
         search_criteria['monitor_ids'] = { '$in': [UUID(post_request_params.monitor_id)] }  
 
@@ -128,8 +132,8 @@ def json_responce(result):
 
 @app.post("/posts", response_description="Get list of posts", response_model=List[Post])
 async def posts(request: Request, post_request_params: RequestPostsFilters, current_email: str = Depends(get_current_user_email)) -> List[Post]:
-    await mongo([Post, CollectTask], request)
-    search_criteria = generate_search_criteria(post_request_params)
+    await mongo([Post, CollectTask, SearchTerm], request)
+    search_criteria = await generate_search_criteria(post_request_params)
 
     result = await Post.find(search_criteria)\
         .aggregate([
@@ -194,8 +198,8 @@ async def posts(request: Request, post_request_params: RequestPostsFilters, curr
 
 @app.post("/download_posts", response_description="Get csv file of posts")
 async def download_posts(request: Request, post_request_params:RequestPostsFilters):
-    await mongo([Post], request)
-    search_criteria = generate_search_criteria(post_request_params)
+    await mongo([Post, SearchTerm], request)
+    search_criteria = await generate_search_criteria(post_request_params)
 
     posts = await Post.find(search_criteria)\
         .aggregate([
@@ -681,8 +685,10 @@ async def recommendations(request: Request, monitor_id: RequestId, current_email
     for tf_idf, token in zip(monitor_tfidfs, tokens):
         tokens_with_tfidfs.append((tf_idf, token))
     words = sorted(tokens_with_tfidfs, reverse=True)[:10]
-    words = [word[1] for word in words]
+    words = [{ 'word': word[1], 'score': word[0]} for word in words]
+    
     return JSONResponse(content=jsonable_encoder(words), status_code=200)
+
 
 
 @app.post("/monitor_progress", response_description="Get monitor")
