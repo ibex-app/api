@@ -3,7 +3,7 @@ from tkinter import Label
 from turtle import st
 from beanie import init_beanie
 import motor
-
+from itertools import chain
 from bson.binary import Binary
 
 from datetime import datetime
@@ -43,6 +43,7 @@ from app.core.datasources import collector_classes
 from sklearn.feature_extraction.text import TfidfVectorizer
 import nltk
 from nltk.corpus import stopwords
+from asyncio import gather
 
 # OAuth settings
 GOOGLE_CLIENT_ID = os.environ.get('GOOGLE_CLIENT_ID') or None
@@ -535,7 +536,7 @@ async def get_hits_count(request: Request, postRequestParamsSinge: RequestId, cu
 
     
 @app.post("/get_monitor", response_description="Get monitor")
-async def search_account(request: Request, monitor_id: RequestId, current_email: str = Depends(get_current_user_email)):
+async def get_monitor(request: Request, monitor_id: RequestId, current_email: str = Depends(get_current_user_email)):
     await mongo([Monitor, SearchTerm, Account, CollectAction], request)
     
     monitor = await Monitor.get(monitor_id.id)
@@ -562,13 +563,16 @@ async def get_monitors(request: Request, post_tag: RequestTag, current_email: st
 async def search_account(request: Request, search_accounts: RequestAccountsSearch, current_email: str = Depends(get_current_user_email)):
     await mongo([Account], request)
     accounts: List[Account] = []
+    
+    methods = []
     for platform in collector_classes:
-        # if platform in [Platform.facebook]: continue
         data_source = collector_classes[platform]()
-        accounts_from_platform: List[Account] = await data_source.get_accounts(search_accounts.substring)
-        accounts += accounts_from_platform[:3]
+        methods.append(data_source.get_accounts)
+
+    accounts_from_platforms = await gather(*[method(search_accounts.substring) for method in methods])
+
     responce = []
-    for account in accounts:
+    for account in chain.from_iterable([accounts_from_platform[:3] for accounts_from_platform in accounts_from_platforms]):
         responce.append({
             'label': account.title,
             'icon': account.platform,
