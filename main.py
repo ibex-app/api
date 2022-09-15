@@ -697,7 +697,26 @@ async def recommendations(request: Request, monitor_id: RequestId, current_email
 
 @app.post("/monitor_progress", response_description="Get monitor")
 async def monitor_progress(request: Request, monitor_id: RequestId, current_email: str = Depends(get_current_user_email)):
-    pass
+    await mongo([Post, CollectTask, SearchTerm, Account], request)
+    status_result = []
+    platforms = [pl for pl in dir(Platform) if "__" not in pl]
+    for platform in platforms:
+        platform_progress = dict(
+            tasks_count=await CollectTask.find(
+                CollectTask.monitor_id == UUID(monitor_id.id),
+                In(CollectTask.platform, [platform])
+            ).count(),
+            finalized_collect_tasks_count=await CollectTask.find(
+                CollectTask.monitor_id == UUID(monitor_id.id), CollectTask.status == CollectTaskStatus.finalized
+                , In(CollectTask.platform, [platform])).count(),
+            posts_count=await Post.find(
+                In(Post.monitor_ids, [UUID(monitor_id.id)])
+                and Post.platform == platform).count())
+        platform_progress['platform'] = platform    
+        platform_progress["time_estimate"] = (int(platform_progress["tasks_count"])
+                                      - int(platform_progress["finalized_collect_tasks_count"])) * 4
+        status_result.append(platform_progress)
+    return json_responce(status_result)
 
 @app.get('/login')
 async def login(request: Request):
