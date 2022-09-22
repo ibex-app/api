@@ -184,8 +184,8 @@ async def posts(request: Request, post_request_params: RequestPostsFilters, curr
         result_['api_dump'] = ''
 
     non_finalized_collect_tasks_count = await CollectTask\
-        .find(CollectTask.monitor_id == post_request_params.monitor_id \
-            and CollectTask.status != CollectTaskStatus.finalized)\
+        .find(CollectTask.monitor_id == post_request_params.monitor_id,
+            CollectTask.status != CollectTaskStatus.finalized)\
         .count()
 
     is_loading = non_finalized_collect_tasks_count > 0
@@ -260,7 +260,7 @@ async def posts_aggregated(request: Request, post_request_params_aggregated: Req
     
     await mongo([Post], request)
     
-    search_criteria = generate_search_criteria(post_request_params_aggregated.post_request_params)
+    search_criteria = await generate_search_criteria(post_request_params_aggregated.post_request_params)
     
     axisX = f"${post_request_params_aggregated.axisX}" \
         if post_request_params_aggregated.axisX in ['platform', 'author_platform_id'] \
@@ -499,7 +499,7 @@ async def collect_sample(request: Request, monitor_id: RequestId, current_email:
 
 
 def collect_sample_cmd(monitor_id:str):
-    cmd = f'python3 /root/data-collection-and-processing/main.py --monitor_id={monitor_id} --sample=True >> api.out'
+    cmd = f'python3 /root/data-collection-and-processing/main.py --monitor_id={monitor_id} --sample=True >> celery_worker.out'
     subprocess.Popen(cmd, stdout=None, stderr=None, stdin=None, close_fds=True, shell=True)
 
 
@@ -514,12 +514,18 @@ async def get_hits_count(request: Request, postRequestParamsSinge: RequestId, cu
     from itertools import groupby
     import numbers
 
-    getTerm = lambda collect_task: collect_task.search_terms[0].term
-    getTottal = lambda search_term_counts: sum([i for i in search_term_counts.values() if isinstance(i,  numbers.Number)])
+    # getTerm = lambda collect_task: collect_task.search_terms[0].term
+    def get_name(collect_task):
+        if collect_task.search_terms and len(collect_task.search_terms):
+            return collect_task.search_terms[0].term
+        elif collect_task.accounts and len(collect_task.accounts):
+            return collect_task.accounts[0].title
 
+    getTottal = lambda search_term_counts: sum([i for i in search_term_counts.values() if isinstance(i,  numbers.Number)])
+    
     grouped = {}
     for collect_task in collect_tasks:
-        term = getTerm(collect_task)
+        term = get_name(collect_task)
         if term not in grouped: grouped[term] = []
         grouped[term].append(collect_task) 
 
