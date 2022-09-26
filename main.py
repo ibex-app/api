@@ -397,6 +397,9 @@ async def run_data_collection(request: Request, monitor_id: RequestId, current_e
 
     await Post.find(In(Post.monitor_ids, [UUID(monitor_id.id)])).delete()
     await CollectTask.find(CollectTask.monitor_id == UUID(monitor_id.id)).delete()
+
+    collect_sample_cmd(monitor_id.id, True)
+
     monitor = get_monitor(monitor_id) 
     return monitor
     
@@ -498,11 +501,11 @@ async def modify_monitor_accounts(postMonitor):
 
 @app.post("/collect_sample", response_description="Run sample collection pipeline")
 async def collect_sample(request: Request, monitor_id: RequestId, current_email: str = Depends(get_current_user_email)):
-    collect_sample_cmd(monitor_id.id)
+    collect_sample_cmd(monitor_id.id, True)
 
 
-def collect_sample_cmd(monitor_id:str):
-    cmd = f'python3 /root/data-collection-and-processing/main.py --monitor_id={monitor_id} --sample=True >> celery_worker.out'
+def collect_sample_cmd(monitor_id:str, sample:bool = False):
+    cmd = f'python3 /root/data-collection-and-processing/main.py --monitor_id={monitor_id} --sample={sample} >> celery_worker.out'
     subprocess.Popen(cmd, stdout=None, stderr=None, stdin=None, close_fds=True, shell=True)
 
 
