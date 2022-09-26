@@ -200,7 +200,7 @@ async def posts(request: Request, post_request_params: RequestPostsFilters, curr
             posts += await get_posts(post_request_params)
     else: 
         posts = await get_posts(post_request_params)
-    print(1111111, post_request_params.monitor_id)
+    
     non_finalized_collect_tasks_count = await CollectTask\
         .find(CollectTask.monitor_id == UUID(post_request_params.monitor_id),
             CollectTask.status != CollectTaskStatus.finalized)\
@@ -220,57 +220,20 @@ async def posts(request: Request, post_request_params: RequestPostsFilters, curr
 
 @app.post("/download_posts", response_description="Get csv file of posts")
 async def download_posts(request: Request, post_request_params:RequestPostsFilters):
-    await mongo([Post, SearchTerm], request)
-    search_criteria = await generate_search_criteria(post_request_params)
-
-    posts = await Post.find(search_criteria)\
-        .aggregate([
-            {   '$sort': { 'created_at': -1 }},
-            {
-                '$skip': post_request_params.start_index
-            },
-            {
-                '$limit': post_request_params.count
-            },
-            {
-                '$lookup': {
-                        'from': "tags",
-                        'localField': "labels.topics",
-                        'foreignField': "_id",
-                        'as': "labels.topics"
-                    }
-            },
-            {
-                '$lookup': {
-                        'from': "tags",
-                        'localField': "labels.locations",
-                        'foreignField': "_id",
-                        'as': "labels.locations"
-                    }
-            },
-            {
-                '$lookup': {
-                        'from': "tags",
-                        'localField': "labels.persons",
-                        'foreignField': "_id",
-                        'as': "labels.persons"
-                    }
-            },
-            {
-                '$lookup': {
-                    'from': "accounts",
-                    'localField': f"account_id",
-                    'foreignField': "_id",
-                    'as': "account"
-                }
-            },
-        ])\
-        .to_list()
-
-    for result_ in posts:
-        result_['api_dump'] = ''
+    await mongo([Post, CollectTask, SearchTerm, CollectAction], request)
+    posts = await get_posts(post_request_params)
     
-    posts_df = pd.DataFrame([o.__dict__ for o in posts])
+    for post in posts:
+        del post['api_dump']
+        # TODO add labels to downloadable df
+        # for label in post['labels']:
+        #     post[f'label_{label}'] = post['labels'][label]
+        del post['labels']
+        for score in post['scores']:
+            post[f'score_{score}'] = post['scores'][score]
+        del post['scores']
+
+    posts_df = pd.DataFrame(posts)
     path = f'/root/frontend/build/{post_request_params.monitor_id}.csv'
     posts_df.to_csv(path, index=None)
     return JSONResponse(content=jsonable_encoder({'file_location': path}), status_code=200)
