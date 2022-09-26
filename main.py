@@ -201,16 +201,18 @@ async def posts(request: Request, post_request_params: RequestPostsFilters, curr
     else: 
         posts = await get_posts(post_request_params)
     
-    non_finalized_collect_tasks_count = await CollectTask\
-        .find(CollectTask.monitor_id == UUID(post_request_params.monitor_id),
-            CollectTask.status != CollectTaskStatus.finalized)\
-        .count()
+    if post_request_params.monitor_id:
+        non_finalized_collect_tasks_count = await CollectTask\
+            .find(CollectTask.monitor_id == UUID(post_request_params.monitor_id),
+                CollectTask.status != CollectTaskStatus.finalized)\
+            .count()
 
-    collect_tasks_count = await CollectTask\
-        .find(CollectTask.monitor_id == UUID(post_request_params.monitor_id)).count()
+        collect_tasks_count = await CollectTask\
+            .find(CollectTask.monitor_id == UUID(post_request_params.monitor_id)).count()
 
-    is_loading = collect_tasks_count == 0 or non_finalized_collect_tasks_count > 0
-    
+        is_loading = collect_tasks_count == 0 or non_finalized_collect_tasks_count > 0
+    else:
+        is_loading = False
     responce = {
         'posts': posts,
         'is_loading': is_loading
@@ -693,7 +695,7 @@ async def recommendations(request: Request, monitor_id: RequestId, current_email
     vectorizer = TfidfVectorizer(stop_words=stop_words, ngram_range=(1, 2))
 
     response = vectorizer.fit_transform(docs)
-    df_tfidf_sklearn = pd.DataFrame(response.toarray(), columns=vectorizer.get_feature_names())
+    df_tfidf_sklearn = pd.DataFrame(response.toarray(), columns=vectorizer.get_feature_names_out())
     monitor_tfidfs = df_tfidf_sklearn.iloc[0]
     tokens = df_tfidf_sklearn.columns
 
