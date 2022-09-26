@@ -5,13 +5,15 @@ from beanie import init_beanie
 import motor
 from itertools import chain
 from bson.binary import Binary
-
+import math
 from datetime import datetime
 from uuid import UUID, uuid1
 from typing import List
 from ibex_models import  Post, Annotations, TextForAnnotation, Monitor, Platform, Account, SearchTerm, CollectAction, CollectTask, Labels, CollectTaskStatus
 from model import RequestPostsFilters, RequestAnnotations, RequestPostsFiltersAggregated, RequestMonitor, RequestTag, RequestId, RequestAccountsSearch, RequestMonitorEdit, RequestAddTagToPost
 from beanie.odm.operators.find.comparison import In
+from itertools import groupby
+import numbers
 
 from bson import json_util, ObjectId
 from bson.json_util import dumps, loads
@@ -20,7 +22,7 @@ from pydantic import Field, BaseModel, validator
 import json 
 import pandas as pd
 
-from fastapi import FastAPI, Request, Depends
+from fastapi import FastAPI, Request, Depends, HTTPException
 from fastapi.responses import JSONResponse, RedirectResponse
 from fastapi.encoders import jsonable_encoder
 from fastapi.middleware.cors import CORSMiddleware
@@ -130,13 +132,10 @@ def json_responce(result):
     json_result = json.loads(json_util.dumps(result))
     return JSONResponse(content=jsonable_encoder(json_result), status_code=200)
 
-
-@app.post("/posts", response_description="Get list of posts", response_model=List[Post])
-async def posts(request: Request, post_request_params: RequestPostsFilters, current_email: str = Depends(get_current_user_email)) -> List[Post]:
-    await mongo([Post, CollectTask, SearchTerm], request)
+async def get_posts(post_request_params: RequestPostsFilters):
     search_criteria = await generate_search_criteria(post_request_params)
 
-    result = await Post.find(search_criteria)\
+    posts = await Post.find(search_criteria)\
         .aggregate([
             {   '$sort': { 'created_at': -1 }},
             {
@@ -180,18 +179,40 @@ async def posts(request: Request, post_request_params: RequestPostsFilters, curr
         ])\
         .to_list()
 
-    for result_ in result:
-        result_['api_dump'] = ''
+    for post in posts:
+        post['api_dump'] = ''
 
+    return posts
+
+
+@app.post("/posts", response_description="Get list of posts", response_model=List[Post])
+async def posts(request: Request, post_request_params: RequestPostsFilters, current_email: str = Depends(get_current_user_email)) -> List[Post]:
+    await mongo([Post, CollectTask, SearchTerm, CollectAction], request)
+    
+    if post_request_params.shuffle:
+        collect_actions: List[CollectAction] = await CollectAction.find(CollectAction.monitor_id == UUID(post_request_params.monitor_id)).to_list()
+        platforms = set([collect_action.platform for collect_action in collect_actions])
+        post_request_params.start_index = math.ceil(post_request_params.start_index/len(platforms))
+        post_request_params.count = math.ceil(post_request_params.count/len(platforms))
+        posts = []
+        for platform in platforms:
+            post_request_params.platform = [platform]
+            posts += await get_posts(post_request_params)
+    else: 
+        posts = await get_posts(post_request_params)
+    print(1111111, post_request_params.monitor_id)
     non_finalized_collect_tasks_count = await CollectTask\
-        .find(CollectTask.monitor_id == post_request_params.monitor_id,
+        .find(CollectTask.monitor_id == UUID(post_request_params.monitor_id),
             CollectTask.status != CollectTaskStatus.finalized)\
         .count()
 
-    is_loading = non_finalized_collect_tasks_count > 0
+    collect_tasks_count = await CollectTask\
+        .find(CollectTask.monitor_id == UUID(post_request_params.monitor_id)).count()
+
+    is_loading = collect_tasks_count == 0 or non_finalized_collect_tasks_count > 0
     
     responce = {
-        'posts': result,
+        'posts': posts,
         'is_loading': is_loading
     }
     return json_responce(responce)
@@ -397,12 +418,31 @@ async def create_monitor(request: Request, postMonitor: RequestMonitor, current_
 
     return monitor
 
+@app.post("/run_data_collection", response_description="Run data collection")
+async def run_data_collection(request: Request, monitor_id: RequestId, current_email: str = Depends(get_current_user_email)) -> Monitor:
+    await mongo([CollectTask, SearchTerm, Account], request)
+    collect_tasks = await CollectTask.find(CollectTask.monitor_id == UUID(monitor_id.id), CollectTask.get_hits_count == True).to_list()
+    
+    out_of_range = []
+    for collect_task in collect_tasks:
+        if collect_task.hits_count > 10000:
+            out_of_range.append(collect_task)
+
+    if len(out_of_range) > 0:
+        raise HTTPException(status_code=412, detail=jsonable_encoder({'out_of_limit': out_of_range}))
+        # return {'out_of_limit': [out_of_range]}
+
+    await Post.find(In(Post.monitor_ids, [UUID(monitor_id.id)])).delete()
+    await CollectTask.find(CollectTask.monitor_id == UUID(monitor_id.id)).delete()
+    monitor = get_monitor(monitor_id) 
+    return monitor
+    
 
 @app.post("/update_monitor", response_description="Create monitor")
 async def update_monitor(request: Request, postMonitor: RequestMonitorEdit) -> Monitor:
     # the method modifies the monitor in databes and related records
     await mongo([Monitor, Account, SearchTerm, CollectAction, Post, CollectTask], request)
-    print(type(postMonitor.id))
+
     await CollectTask.find(CollectTask.monitor_id == postMonitor.id).delete()
     await Post.find(In(Post.monitor_ids, [postMonitor.id])).delete()
     
@@ -439,11 +479,11 @@ async def modify_monitor_search_terms(postMonitor):
     db_search_terms_to_to_remove_from_db: List[SearchTerm] = [search_term for search_term in db_search_terms if
                                                               search_term.term not in postMonitor.search_terms]
     # print('passed_search_terms:')
-    # print_(postMonitor.search_terms)
+    print_(postMonitor.search_terms)
     # print('db_search_terms:')
-    # print_(db_search_terms)
+    print_(db_search_terms)
     # print('db_search_terms_to_to_remove_from_db:')
-    # print_(db_search_terms_to_to_remove_from_db)
+    print_(db_search_terms_to_to_remove_from_db)
     for search_term in db_search_terms_to_to_remove_from_db:
         search_term.tags = [tag for tag in search_term.tags if tag != str(postMonitor.id)]
         await search_term.save()
@@ -511,10 +551,10 @@ async def get_hits_count(request: Request, postRequestParamsSinge: RequestId, cu
     # counts = {} 
     # for platform in Platform:
     #     counts[platform] = sum([collect_task.hits_count or 0 for collect_task in collect_tasks if collect_task.platform == platform])
-    from itertools import groupby
-    import numbers
+    
 
     # getTerm = lambda collect_task: collect_task.search_terms[0].term
+    
     def get_name(collect_task):
         if collect_task.search_terms and len(collect_task.search_terms):
             return collect_task.search_terms[0].term

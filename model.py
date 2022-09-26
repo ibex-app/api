@@ -1,3 +1,4 @@
+from random import shuffle
 from typing import Optional
 from beanie import Document, init_beanie, odm
 from typing import List
@@ -19,7 +20,8 @@ class RequestPostsFilters(BaseModel):
     locations: List[str] = []
     monitor_id: Optional[str]
     search_terms: Optional[List[str]]
-    
+    shuffle: Optional[bool]
+
     sort_by: Optional[str]
 
     count: int = 100 
