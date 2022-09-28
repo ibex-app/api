@@ -46,6 +46,7 @@ from sklearn.feature_extraction.text import TfidfVectorizer
 import nltk
 from nltk.corpus import stopwords
 from asyncio import gather
+from utils import terminate_monitor_tasks
 
 # OAuth settings
 GOOGLE_CLIENT_ID = os.environ.get('GOOGLE_CLIENT_ID') or None
@@ -132,7 +133,7 @@ def json_responce(result):
     json_result = json.loads(json_util.dumps(result))
     return JSONResponse(content=jsonable_encoder(json_result), status_code=200)
 
-async def get_posts(post_request_params: RequestPostsFilters):
+async def get_posts(post_request_params: RequestPostsFilters): 
     search_criteria = await generate_search_criteria(post_request_params)
 
     posts = await Post.find(search_criteria)\
@@ -399,7 +400,7 @@ async def run_data_collection(request: Request, monitor_id: RequestId, current_e
 
     await Post.find(In(Post.monitor_ids, [UUID(monitor_id.id)])).delete()
     await CollectTask.find(CollectTask.monitor_id == UUID(monitor_id.id)).delete()
-
+    terminate_monitor_tasks(UUID(monitor_id.id))
     collect_sample_cmd(monitor_id.id, True)
 
     monitor = get_monitor(monitor_id) 
@@ -426,6 +427,7 @@ async def update_monitor(request: Request, postMonitor: RequestMonitorEdit) -> M
         await modify_monitor_accounts(postMonitor)
 
     await monitor.save()
+    terminate_monitor_tasks(monitor.id)
     collect_sample_cmd(postMonitor.id)
     # if platforms are passed, it needs to be compared to existing list and
     # and if changes are made, existing records needs to be modified
