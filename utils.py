@@ -4,7 +4,8 @@ from app.config.constants import CeleryConstants as CC
 from app.util.model_utils import deserialize_from_base64
 from uuid import UUID
 import re
-from ibex_models import CollectTask, SearchTerm, Post, Account, Monitor
+from ibex_models import CollectTask, SearchTerm, Post, Account, Monitor, CollectAction
+from ibex_models.platform import Platform
 from model import RequestPostsFilters, RequestPostsFiltersAggregated
 import os
 from turtle import st
@@ -238,8 +239,9 @@ async def modify_monitor_accounts(postMonitor):
     if len(accounts_to_insert): await Account.insert_many(accounts_to_insert)
 
 
-def collect_sample_cmd(monitor_id:str, sample:bool = False):
-    cmd = f'python3 /root/data-collection-and-processing/main.py --monitor_id={monitor_id} --sample={sample} >> celery_worker.out'
+def collect_data_cmd(monitor_id:str, sample:bool = False):
+    cmd = f'python3 /root/data-collection-and-processing/main.py --monitor_id={monitor_id} {"--sample" if sample else ""} >> celery_worker.out'
+    print(f'running command for data collection: {cmd}')
     subprocess.Popen(cmd, stdout=None, stderr=None, stdin=None, close_fds=True, shell=True)
 
 
@@ -316,3 +318,17 @@ async def get_posts_aggregated(post_request_params_aggregated: RequestPostsFilte
         .to_list()
 
     return result
+
+async def get_monitor_platforms(monitor_id: UUID) -> List[Platform]:
+    collect_actions: List[CollectAction] = await CollectAction.find(CollectAction.monitor_id == monitor_id).to_list()
+    platforms = set([collect_action.platform for collect_action in collect_actions])
+    return platforms
+
+async def fetch_full_monitor(monitor_id: str):    
+    monitor = await Monitor.get(monitor_id)
+    search_terms = await SearchTerm.find(In(SearchTerm.tags, [monitor_id])).to_list()
+    accounts = await Account.find(In(SearchTerm.tags, [monitor_id])).to_list()
+    collect_actions = await CollectAction.find(CollectAction.monitor_id == UUID(monitor_id)).to_list()
+    platforms = set([collect_action.platform for collect_action in collect_actions])
+
+    return { 'monitor': monitor, 'search_terms': search_terms, 'accounts': accounts, 'platforms': platforms }

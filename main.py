@@ -2,6 +2,7 @@ from platform import platform
 from tkinter import Label
 
 from itertools import chain
+from urllib import response
 from bson.binary import Binary
 import math
 from datetime import datetime
@@ -42,7 +43,7 @@ from nltk.corpus import stopwords
 from asyncio import gather
 from utils import ( modify_monitor_search_terms, 
                     modify_monitor_accounts, 
-                    collect_sample_cmd, 
+                    collect_data_cmd, 
                     terminate_monitor_tasks, 
                     get_keywords_in_monitor, 
                     get_keywords_in_monitor, 
@@ -51,7 +52,9 @@ from utils import ( modify_monitor_search_terms,
                     json_responce, 
                     get_posts,
                     get_keywords_in_monitor,
-                    get_posts_aggregated)
+                    get_posts_aggregated,
+                    fetch_full_monitor,
+                    get_monitor_platforms)
 
 # OAuth settings
 GOOGLE_CLIENT_ID = os.environ.get('GOOGLE_CLIENT_ID') or None
@@ -92,8 +95,7 @@ async def posts(request: Request, post_request_params: RequestPostsFilters, curr
     await mongo([Post, CollectTask, SearchTerm, CollectAction], request)
     
     if post_request_params.shuffle:
-        collect_actions: List[CollectAction] = await CollectAction.find(CollectAction.monitor_id == UUID(post_request_params.monitor_id)).to_list()
-        platforms = set([collect_action.platform for collect_action in collect_actions])
+        platforms = await get_monitor_platforms(UUID(post_request_params.monitor_id))
         post_request_params.start_index = math.ceil(post_request_params.start_index/len(platforms))
         post_request_params.count = math.ceil(post_request_params.count/len(platforms))
         posts = []
@@ -271,20 +273,13 @@ async def update_monitor(request: Request, postMonitor: RequestMonitorEdit) -> M
 
     await monitor.save()
     terminate_monitor_tasks(monitor.id)
-    collect_sample_cmd(postMonitor.id)
+    collect_data_cmd(postMonitor.id, True)
     
 @app.post("/get_monitor", response_description="Get monitor")
 async def get_monitor(request: Request, monitor_id: RequestId, current_email: str = Depends(get_current_user_email)):
     await mongo([Monitor, SearchTerm, Account, CollectAction], request)
-    
-    monitor = await Monitor.get(monitor_id.id)
-    search_terms = await SearchTerm.find(In(SearchTerm.tags, [monitor_id.id])).to_list()
-    accounts = await Account.find(In(SearchTerm.tags, [monitor_id.id])).to_list()
-    collect_actions = await CollectAction.find(CollectAction.monitor_id == UUID(monitor_id.id)).to_list()
-    platforms = set([collect_action.platform for collect_action in collect_actions])
-
-    return { 'monitor': monitor, 'search_terms': search_terms, 'accounts': accounts, 'platforms': platforms }
-
+    full_monitor = await fetch_full_monitor(monitor_id.id)
+    return full_monitor
 
 @app.post("/get_monitors", response_description="Get monitors")
 async def get_monitors(request: Request, post_tag: RequestTag, current_email: str = Depends(get_current_user_email)) -> Monitor:
@@ -298,9 +293,9 @@ async def get_monitors(request: Request, post_tag: RequestTag, current_email: st
 
 @app.post("/monitor_progress", response_description="Get monitor")
 async def monitor_progress(request: Request, monitor_id: RequestId, current_email: str = Depends(get_current_user_email)):
-    await mongo([Post, CollectTask, SearchTerm, Account], request)
+    await mongo([Post, CollectTask, SearchTerm, Account, CollectAction], request)
     status_result = []
-    platforms = [pl for pl in dir(Platform) if "__" not in pl]
+    platforms = await get_monitor_platforms(UUID(monitor_id.id))
     for platform in platforms:
         platform_progress = dict(
             tasks_count=await CollectTask.find(
@@ -311,8 +306,8 @@ async def monitor_progress(request: Request, monitor_id: RequestId, current_emai
                 CollectTask.monitor_id == UUID(monitor_id.id), CollectTask.status == CollectTaskStatus.finalized
                 , In(CollectTask.platform, [platform])).count(),
             posts_count=await Post.find(
-                In(Post.monitor_ids, [UUID(monitor_id.id)])
-                and Post.platform == platform).count())
+                In(Post.monitor_ids, [UUID(monitor_id.id)]),
+                Post.platform == platform).count())
         platform_progress['platform'] = platform    
         platform_progress["time_estimate"] = (int(platform_progress["tasks_count"])
                                       - int(platform_progress["finalized_collect_tasks_count"])) * 4
@@ -324,12 +319,12 @@ async def monitor_progress(request: Request, monitor_id: RequestId, current_emai
 
 @app.post("/run_data_collection", response_description="Run data collection")
 async def run_data_collection(request: Request, monitor_id: RequestId, current_email: str = Depends(get_current_user_email)) -> Monitor:
-    await mongo([CollectTask, SearchTerm, Account], request)
+    await mongo([Post, Monitor,CollectAction, CollectTask, SearchTerm, Account], request)
     collect_tasks = await CollectTask.find(CollectTask.monitor_id == UUID(monitor_id.id), CollectTask.get_hits_count == True).to_list()
     
     out_of_range = []
     for collect_task in collect_tasks:
-        if collect_task.hits_count > 10000:
+        if collect_task.hits_count and collect_task.hits_count > 10000:
             out_of_range.append(collect_task)
 
     if len(out_of_range) > 0:
@@ -339,15 +334,15 @@ async def run_data_collection(request: Request, monitor_id: RequestId, current_e
     await Post.find(In(Post.monitor_ids, [UUID(monitor_id.id)])).delete()
     await CollectTask.find(CollectTask.monitor_id == UUID(monitor_id.id)).delete()
     terminate_monitor_tasks(UUID(monitor_id.id))
-    collect_sample_cmd(monitor_id.id, True)
+    collect_data_cmd(monitor_id.id)
 
-    monitor = get_monitor(monitor_id) 
-    return monitor
+    full_monitor = await fetch_full_monitor(monitor_id.id)
+    return full_monitor
 
 
 @app.post("/collect_sample", response_description="Run sample collection pipeline")
 async def collect_sample(request: Request, monitor_id: RequestId, current_email: str = Depends(get_current_user_email)):
-    collect_sample_cmd(monitor_id.id, True)
+    collect_data_cmd(monitor_id.id, True)
 
 
 # TAXONOMY TOOL 
