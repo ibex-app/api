@@ -257,8 +257,11 @@ async def update_monitor(request: Request, postMonitor: RequestMonitorEdit) -> M
     # the method modifies the monitor in databes and related records
     await mongo([Monitor, Account, SearchTerm, CollectAction, Post, CollectTask], request)
 
-    await CollectTask.find(CollectTask.monitor_id == postMonitor.id).delete()
-    await Post.find(In(Post.monitor_ids, [postMonitor.id])).delete()
+    await CollectTask.find( CollectTask.monitor_id == postMonitor.id, 
+                            CollectTask.status != CollectTaskStatus.finalized).delete()
+
+    # await Post.find(In(Post.monitor_ids, [postMonitor.id]), $nin: { Post.accounts, [_.id for _ in postMonitor.accounts} ).delete()
+    # await Post.find(In(Post.monitor_ids, [postMonitor.id]), $nin: { Post.searcH_terms, [_.id for _ in postMonitor.searcH_terms} ).delete()
     
     monitor = await Monitor.get(postMonitor.id)
 
