@@ -2,13 +2,15 @@ from platform import platform
 from tkinter import Label
 
 from itertools import chain
+from functools import reduce
+
 from urllib import response
 from bson.binary import Binary
 import math
 from datetime import datetime
 from uuid import UUID, uuid1
 from typing import List
-from ibex_models import  Post, Annotations, TextForAnnotation, Monitor, Platform, Account, SearchTerm, CollectAction, CollectTask, Labels, CollectTaskStatus
+from ibex_models import  MonitorStatus, Post, Annotations, TextForAnnotation, Monitor, Platform, Account, SearchTerm, CollectAction, CollectTask, Labels, CollectTaskStatus, account
 from model import RequestPostsFilters, RequestAnnotations, RequestPostsFiltersAggregated, RequestMonitor, RequestTag, RequestId, RequestAccountsSearch, RequestMonitorEdit, RequestAddTagToPost
 from beanie.odm.operators.find.comparison import In
 import numbers
@@ -36,6 +38,7 @@ from authlib.integrations.starlette_client import OAuth
 from starlette.config import Config
 
 from app.core.datasources import collector_classes
+from app.core.populate_collectors import sampling_tasks_match
 
 from sklearn.feature_extraction.text import TfidfVectorizer
 import nltk
@@ -92,7 +95,7 @@ app.add_middleware(SessionMiddleware, secret_key='_SECRET_KEY_')
 
 @app.post("/posts", response_description="Get list of posts", response_model=List[Post])
 async def posts(request: Request, post_request_params: RequestPostsFilters, current_email: str = Depends(get_current_user_email)) -> List[Post]:
-    await mongo([Post, CollectTask, SearchTerm, CollectAction], request)
+    await mongo([Monitor, Post, CollectTask, SearchTerm, CollectAction], request)
     
     if post_request_params.shuffle:
         platforms = await get_monitor_platforms(UUID(post_request_params.monitor_id))
@@ -106,15 +109,9 @@ async def posts(request: Request, post_request_params: RequestPostsFilters, curr
         posts = await get_posts(post_request_params)
     
     if post_request_params.monitor_id:
-        non_finalized_collect_tasks_count = await CollectTask\
-            .find(CollectTask.monitor_id == UUID(post_request_params.monitor_id),
-                CollectTask.status != CollectTaskStatus.finalized)\
-            .count()
-
-        collect_tasks_count = await CollectTask\
-            .find(CollectTask.monitor_id == UUID(post_request_params.monitor_id)).count()
-
-        is_loading = collect_tasks_count == 0 or non_finalized_collect_tasks_count > 0
+        monitor = await Monitor.get(UUID(post_request_params.monitor_id))
+        collect_tasks = await CollectTask.find(CollectTask.monitor_id == UUID(post_request_params.monitor_id)).to_list()
+        is_loading = len([1 for _ in collect_tasks if _.status != CollectTaskStatus.finalized]) > 0 and monitor.status <= MonitorStatus.sampling
     else:
         is_loading = False
     responce = {
@@ -204,20 +201,30 @@ async def create_monitor(request: Request, postMonitor: RequestMonitor, current_
     # print(monitor.id, type(monitor.id), type(str(monitor.id)))
     search_terms = []
     if postMonitor.search_terms:
-        search_terms = [SearchTerm(
-                term=search_term, 
-                tags=[str(monitor.id)]
-            ) for search_term in postMonitor.search_terms]
+        for search_term in postMonitor.search_terms:
+            existing_search_term = await SearchTerm.find(SearchTerm.term == search_term).limit(1).to_list()
+            if existing_search_term and len(existing_search_term): 
+                existing_search_term[0].tags.append(str(monitor.id))
+                await existing_search_term[0].save()
+            else:
+                search_terms.append(SearchTerm( term=search_term, 
+                                                tags=[str(monitor.id)] ))
     
     accounts = []
     if postMonitor.accounts:
-        accounts = [Account(
+        for account in postMonitor.accounts:
+            existing_account = await Account.find(Account.platform == account.title).to_list()
+            if existing_account: 
+                existing_account.tags.append(str(monitor.id))
+            else:
+                accounts.append(Account(
                 title = account.title, 
                 platform = account.platform, 
                 platform_id = account.platform_id, 
                 tags = [str(monitor.id)],
                 url=''
-            ) for account in postMonitor.accounts]
+            ))
+        
     
     platforms = postMonitor.platforms if postMonitor.platforms and len(postMonitor.platforms) else [account.platform for account in postMonitor.accounts]
     
@@ -257,24 +264,40 @@ async def update_monitor(request: Request, postMonitor: RequestMonitorEdit) -> M
     # the method modifies the monitor in databes and related records
     await mongo([Monitor, Account, SearchTerm, CollectAction, Post, CollectTask], request)
 
-    await CollectTask.find( CollectTask.monitor_id == postMonitor.id, 
+    print('postMonitor.id type', type(postMonitor.id))
+
+    list_1 = await CollectTask.find( CollectTask.monitor_id == postMonitor.id,
+                            CollectTask.status != CollectTaskStatus.finalized).to_list()
+    print('lsit1', len(list_1))
+
+    await CollectTask.find( CollectTask.monitor_id == postMonitor.id,
                             CollectTask.status != CollectTaskStatus.finalized).delete()
 
+    # list_2 = await CollectTask.find( CollectTask.monitor_id == UUID(postMonitor.id),
+    #                         CollectTask.status != CollectTaskStatus.finalized).to_list()
+    # print('list_2', len(list_2))
+    
+    # await CollectTask.find( CollectTask.monitor_id == UUID(postMonitor.id),
+    #                         CollectTask.status != CollectTaskStatus.finalized).delete()
+
+
+    
     # await Post.find(In(Post.monitor_ids, [postMonitor.id]), $nin: { Post.accounts, [_.id for _ in postMonitor.accounts} ).delete()
     # await Post.find(In(Post.monitor_ids, [postMonitor.id]), $nin: { Post.searcH_terms, [_.id for _ in postMonitor.searcH_terms} ).delete()
     
     monitor = await Monitor.get(postMonitor.id)
-
+    monitor.status = MonitorStatus.sampling
     # if date_from and date_to exists in postMonitor, it is updated
     if postMonitor.date_from: monitor.date_from = postMonitor.date_from
     if postMonitor.date_to: monitor.date_to = postMonitor.date_to
     
+    await monitor.save()
+
     if postMonitor.search_terms:
         await modify_monitor_search_terms(postMonitor)
     if postMonitor.accounts:
         await modify_monitor_accounts(postMonitor)
 
-    await monitor.save()
     terminate_monitor_tasks(monitor.id)
     collect_data_cmd(postMonitor.id, True)
     
@@ -352,40 +375,57 @@ async def collect_sample(request: Request, monitor_id: RequestId, current_email:
 
 @app.post("/get_hits_count", response_description="Get amount of post for monitor")
 async def get_hits_count(request: Request, postRequestParamsSinge: RequestId, current_email: str = Depends(get_current_user_email)):
-    await mongo([CollectTask, SearchTerm, Account], request)
+    await mongo([Monitor, CollectTask, SearchTerm, Account], request)
 
     collect_tasks = await CollectTask.find(CollectTask.monitor_id == UUID(postRequestParamsSinge.id), CollectTask.get_hits_count == True).to_list()
-    # counts = {} 
-    # for platform in Platform:
-    #     counts[platform] = sum([collect_task.hits_count or 0 for collect_task in collect_tasks if collect_task.platform == platform])
     
-
-    # getTerm = lambda collect_task: collect_task.search_terms[0].term
-    
-    def get_name(collect_task):
-        if collect_task.search_terms and len(collect_task.search_terms):
-            return collect_task.search_terms[0].term
-        elif collect_task.accounts and len(collect_task.accounts):
-            return collect_task.accounts[0].title
-
     getTottal = lambda search_term_counts: sum([i for i in search_term_counts.values() if isinstance(i,  numbers.Number)])
     
-    grouped = {}
+    if not len(collect_tasks): return {
+        'is_loading': True,
+        'data': []
+     }
+    monitor = await Monitor.get(UUID(postRequestParamsSinge.id))
+    
+    result = {
+        'is_loading': len([1 for _ in collect_tasks if _.status != CollectTaskStatus.finalized]) > 0 and monitor.status <= MonitorStatus.sampling,
+        'data': [],
+        'type': 'accounts' if collect_tasks[0].accounts and len(collect_tasks[0].accounts) > 0 else 'search_terms' #'account and search_term'
+    }
+
+    def compare(hits_count_in_results, collect_task):
+        search_term_or_account_1 = hits_count_in_results['item']
+        search_term_or_account_2 = collect_task.accounts[0] if result['type'] == 'accounts' else collect_task.search_terms[0]
+        if type(search_term_or_account_1) == SearchTerm:
+            return search_term_or_account_1.term == search_term_or_account_2.term
+        else:
+            return search_term_or_account_1.platform == search_term_or_account_2.platform and search_term_or_account_1.platform_id == search_term_or_account_2.platform_id
+        
+
     for collect_task in collect_tasks:
-        term = get_name(collect_task)
-        if term not in grouped: grouped[term] = []
-        grouped[term].append(collect_task) 
 
-    terms_with_counts = { 'search_terms': [] }
-    for search_term, collect_tasks in grouped.items():
-        term_counts = {}
-        term_counts['search_term'] = search_term
-        for collect_task in collect_tasks:
-            term_counts[collect_task.platform] = collect_task.hits_count
-        terms_with_counts['search_terms'].append(term_counts)
+        hits_count_filterd = list((filter(lambda hits_count_in_results: compare(hits_count_in_results, collect_task) , result['data'])))
+        # print(1111, hits_count_filterd, 2222)
+        if len(hits_count_filterd) == 1:
+            hits_count = hits_count_filterd[0]
+        else:
+            hits_count = {}   
+            hits_count['item'] = collect_task.accounts[0] if result['type'] == 'accounts' else collect_task.search_terms[0]
+            result['data'].append(hits_count)
 
-    terms_with_counts['search_terms'] = sorted(terms_with_counts['search_terms'], key=getTottal)
-    return JSONResponse(content=jsonable_encoder(terms_with_counts), status_code=200)
+        hits_count_key = 'hits_count' if result['type'] == 'accounts' else collect_task.platform
+        # print('hits count', hits_count)
+        # print('hits_count_key', hits_count_key)
+        # print('Not in', hits_count_key not in hits_count)
+        if hits_count_key in hits_count and hits_count[hits_count_key]:
+            hits_count[hits_count_key] += collect_task.hits_count
+        else:
+            hits_count[hits_count_key] = collect_task.hits_count
+    
+        # print(4444, result, 5555)
+
+    result['data'] = sorted(result['data'], key=getTottal)
+    return JSONResponse(content=jsonable_encoder(result), status_code=200)
     
 
 @app.post("/search_account", response_description="Search accounts by string across all platforms")

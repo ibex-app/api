@@ -40,9 +40,9 @@ def terminate_monitor_tasks(monitor_id: UUID):
     reserved = i.reserved()
     active = i.active()
 
-    active_tasks = list(active.items())[0][1]
-    reserved_tasks = list(reserved.items())[0][1]
-    scheduled_tasks = list(scheduled.items())[0][1]
+    active_tasks = list(active.items())[0][1] if active else []
+    reserved_tasks = list(reserved.items())[0][1] if reserved else []
+    scheduled_tasks = list(scheduled.items())[0][1] if scheduled else []
 
     all_tasks = active_tasks + reserved_tasks + scheduled_tasks
 
