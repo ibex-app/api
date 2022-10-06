@@ -464,7 +464,15 @@ async def recommendations(request: Request, monitor_id: RequestId, current_email
     """
     await mongo([Monitor, Post], request)
 
+    monitor = await Monitor.get(monitor_id.id)
+    
+
     monitor_posts = await Post.find({ 'monitor_ids': {'$nin': [UUID(monitor_id.id)] }}).aggregate([{ '$sample': { 'size': 1500 } } ]).to_list()
+    if monitor.status < MonitorStatus.sampling and len(monitor_posts) < 200 :
+        return {
+            'is_loading': True
+        }
+    
     sample_size = 500 if len(monitor_posts) < 500 else len(monitor_posts)
     # sample_size = 100
     other_posts = await Post.find({ 'monitor_ids': {'$nin': [UUID(monitor_id.id)] }}).aggregate([{ '$sample': { 'size': sample_size } } ]).to_list()
