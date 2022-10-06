@@ -264,24 +264,21 @@ async def update_monitor(request: Request, postMonitor: RequestMonitorEdit) -> M
     # the method modifies the monitor in databes and related records
     await mongo([Monitor, Account, SearchTerm, CollectAction, Post, CollectTask], request)
 
-    print('postMonitor.id type', type(postMonitor.id))
-
-    list_1 = await CollectTask.find( CollectTask.monitor_id == postMonitor.id,
-                            CollectTask.status != CollectTaskStatus.finalized).to_list()
-    print('lsit1', len(list_1))
-
     await CollectTask.find( CollectTask.monitor_id == postMonitor.id,
                             CollectTask.status != CollectTaskStatus.finalized).delete()
 
-    # list_2 = await CollectTask.find( CollectTask.monitor_id == UUID(postMonitor.id),
-    #                         CollectTask.status != CollectTaskStatus.finalized).to_list()
-    # print('list_2', len(list_2))
-    
-    # await CollectTask.find( CollectTask.monitor_id == UUID(postMonitor.id),
-    #                         CollectTask.status != CollectTaskStatus.finalized).delete()
+    hits_count_tasks = await CollectTask.find( CollectTask.monitor_id == postMonitor.id, 
+                                                CollectTask.get_hits_count == True).to_list()
 
+    for hits_count_task in hits_count_tasks:
+        if ((hits_count_task.search_terms and 
+            len(hits_count_task.search_terms) and 
+            hits_count_task.search_terms[0].term not in postMonitor.search_terms) or 
+            (hits_count_task.accounts and 
+            len(hits_count_task.accounts) and 
+            hits_count_task.accounts[0].platform_id not in [_.platform_id for _ in postMonitor.accounts])):
+            await hits_count_task.delete()
 
-    
     # await Post.find(In(Post.monitor_ids, [postMonitor.id]), $nin: { Post.accounts, [_.id for _ in postMonitor.accounts} ).delete()
     # await Post.find(In(Post.monitor_ids, [postMonitor.id]), $nin: { Post.searcH_terms, [_.id for _ in postMonitor.searcH_terms} ).delete()
     
@@ -388,7 +385,7 @@ async def get_hits_count(request: Request, postRequestParamsSinge: RequestId, cu
     monitor = await Monitor.get(UUID(postRequestParamsSinge.id))
     
     result = {
-        'is_loading': len([1 for _ in collect_tasks if _.status != CollectTaskStatus.finalized]) > 0 and monitor.status <= MonitorStatus.sampling,
+        'is_loading': monitor.status <= MonitorStatus.sampling,
         'data': [],
         'type': 'accounts' if collect_tasks[0].accounts and len(collect_tasks[0].accounts) > 0 else 'search_terms' #'account and search_term'
     }
@@ -416,9 +413,10 @@ async def get_hits_count(request: Request, postRequestParamsSinge: RequestId, cu
         hits_count_key = 'hits_count' if result['type'] == 'accounts' else collect_task.platform
         # print('hits count', hits_count)
         # print('hits_count_key', hits_count_key)
-        # print('Not in', hits_count_key not in hits_count)
-        if hits_count_key in hits_count and hits_count[hits_count_key]:
-            hits_count[hits_count_key] += collect_task.hits_count
+        # print('bool-', hits_count_key in hits_count and hits_count[hits_count_key])
+        if hits_count_key in hits_count and (hits_count[hits_count_key] or hits_count[hits_count_key] == 0):
+            if collect_task.hits_count and collect_task.hits_count != 0:
+                hits_count[hits_count_key] += collect_task.hits_count
         else:
             hits_count[hits_count_key] = collect_task.hits_count
     
