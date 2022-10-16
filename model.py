@@ -50,6 +50,7 @@ class RequestAccountsSearch(BaseModel):
     platforms: List[Platform]
 
 class RequestAccount(BaseModel):
+    _id: Optional[UUID]
     title: str
     platform: Platform
     platform_id: str
@@ -64,11 +65,16 @@ class RequestMonitor(BaseModel):
     platforms: Optional[List[Platform]]
     languages: Optional[List[str]]
 
+class RequestSearchTerm(BaseModel):
+    id: Optional[UUID]
+    term: str
+
+
 class RequestMonitorEdit(BaseModel):
     id: UUID
     date_from: Optional[datetime]
     date_to: Optional[datetime]
-    search_terms: Optional[List[str]]
+    search_terms: Optional[List[RequestSearchTerm]]
     accounts: Optional[List[RequestAccount]]
     platforms: Optional[List[Platform]]
     languages: Optional[List[str]]

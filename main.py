@@ -1,20 +1,14 @@
-from platform import platform
 from tkinter import Label
-
 from itertools import chain
 from functools import reduce
-
 from urllib import response
 from bson.binary import Binary
 import math
 from datetime import datetime
 from uuid import UUID, uuid1
 from typing import List
-from ibex_models import  MonitorStatus, Post, Annotations, TextForAnnotation, Monitor, Platform, Account, SearchTerm, CollectAction, CollectTask, Labels, CollectTaskStatus, account
-from model import RequestPostsFilters, RequestAnnotations, RequestPostsFiltersAggregated, RequestMonitor, RequestTag, RequestId, RequestAccountsSearch, RequestMonitorEdit, RequestAddTagToPost
 from beanie.odm.operators.find.comparison import In
 import numbers
-
 
 from bson.json_util import dumps, loads
 
@@ -40,10 +34,10 @@ from starlette.config import Config
 from app.core.datasources import collector_classes
 from app.core.populate_collectors import sampling_tasks_match
 
+from asyncio import gather
 from sklearn.feature_extraction.text import TfidfVectorizer
 import nltk
 from nltk.corpus import stopwords
-from asyncio import gather
 from utils import ( modify_monitor_search_terms, 
                     modify_monitor_accounts, 
                     collect_data_cmd, 
@@ -57,8 +51,29 @@ from utils import ( modify_monitor_search_terms,
                     get_keywords_in_monitor,
                     get_posts_aggregated,
                     fetch_full_monitor,
-                    get_monitor_platforms)
-
+                    get_monitor_platforms,
+                    delete_out_of_monitor_posts)
+from ibex_models import  (MonitorStatus,
+                         Post,
+                         Annotations,
+                         TextForAnnotation,
+                         Monitor,
+                         Platform,
+                         Account,
+                         SearchTerm,
+                         CollectAction,
+                         CollectTask,
+                         Labels,
+                         CollectTaskStatus) 
+from model import (RequestPostsFilters,
+                   RequestAnnotations,
+                   RequestPostsFiltersAggregated,
+                   RequestMonitor,
+                   RequestTag,
+                   RequestId,
+                   RequestAccountsSearch,
+                   RequestMonitorEdit,
+                   RequestAddTagToPost)
 # OAuth settings
 GOOGLE_CLIENT_ID = os.environ.get('GOOGLE_CLIENT_ID') or None
 GOOGLE_CLIENT_SECRET = os.environ.get('GOOGLE_CLIENT_SECRET') or None
@@ -99,11 +114,13 @@ async def posts(request: Request, post_request_params: RequestPostsFilters, curr
     
     if post_request_params.shuffle:
         platforms = await get_monitor_platforms(UUID(post_request_params.monitor_id))
+        if post_request_params.platform and len(post_request_params.platform):
+            platforms = list(set(post_request_params.platform) & set(platforms))
         post_request_params.start_index = math.ceil(post_request_params.start_index/len(platforms))
         post_request_params.count = math.ceil(post_request_params.count/len(platforms))
         posts = []
         for platform in platforms:
-            post_request_params.platform = [platform]
+            post_request_params.platform = [platform if type(platform) == str else platform.value]
             posts += await get_posts(post_request_params)
     else: 
         posts = await get_posts(post_request_params)
@@ -191,12 +208,15 @@ async def add_tag_to_post(request: Request, requestAddTagToPost: RequestAddTagTo
 async def create_monitor(request: Request, postMonitor: RequestMonitor, current_email: str = Depends(get_current_user_email)) -> Monitor:
     await mongo([Monitor, Account, SearchTerm, CollectAction], request)
 
+    platforms:List[Platform] = postMonitor.platforms or list(set([_.platform for _ in postMonitor.accounts])) 
+
     monitor = Monitor(
         title=postMonitor.title, 
         descr=postMonitor.descr, 
         collect_actions = [], 
         date_from=postMonitor.date_from, 
-        date_to=postMonitor.date_to
+        date_to=postMonitor.date_to,
+        platforms=platforms
     )
     # print(monitor.id, type(monitor.id), type(str(monitor.id)))
     search_terms = []
@@ -262,7 +282,11 @@ async def update_monitor(request: Request, postMonitor: RequestMonitorEdit) -> M
     # languages: Optional[List[str]]
 
     # the method modifies the monitor in databes and related records
+    # if not len(postMonitor.accounts) and not len(postMonitor.search_terms):
+    #     raise HTTPException(detail="no accounts and search terms passed to update method")
+
     await mongo([Monitor, Account, SearchTerm, CollectAction, Post, CollectTask], request)
+    terminate_monitor_tasks(postMonitor.id)
 
     await CollectTask.find( CollectTask.monitor_id == postMonitor.id,
                             CollectTask.status != CollectTaskStatus.finalized).delete()
@@ -273,15 +297,15 @@ async def update_monitor(request: Request, postMonitor: RequestMonitorEdit) -> M
     for hits_count_task in hits_count_tasks:
         if ((hits_count_task.search_terms and 
             len(hits_count_task.search_terms) and 
-            hits_count_task.search_terms[0].term not in postMonitor.search_terms) or 
+            hits_count_task.search_terms[0].term not in [_.term for _ in postMonitor.search_terms]) or 
             (hits_count_task.accounts and 
             len(hits_count_task.accounts) and 
             hits_count_task.accounts[0].platform_id not in [_.platform_id for _ in postMonitor.accounts])):
+            print('deleteing hits_count_task', hits_count_task)
             await hits_count_task.delete()
 
-    # await Post.find(In(Post.monitor_ids, [postMonitor.id]), $nin: { Post.accounts, [_.id for _ in postMonitor.accounts} ).delete()
-    # await Post.find(In(Post.monitor_ids, [postMonitor.id]), $nin: { Post.searcH_terms, [_.id for _ in postMonitor.searcH_terms} ).delete()
-    
+    await delete_out_of_monitor_posts(str(postMonitor.id), request)
+
     monitor = await Monitor.get(postMonitor.id)
     monitor.status = MonitorStatus.sampling
     # if date_from and date_to exists in postMonitor, it is updated
@@ -295,9 +319,20 @@ async def update_monitor(request: Request, postMonitor: RequestMonitorEdit) -> M
     if postMonitor.accounts:
         await modify_monitor_accounts(postMonitor)
 
-    terminate_monitor_tasks(monitor.id)
+    
     collect_data_cmd(postMonitor.id, True)
     
+@app.post("/clone_monitor", response_description="Get monitor")
+async def clone_monitor(request: Request, monitor_id: RequestId, current_email: str = Depends(get_current_user_email)):
+    await mongo([Monitor, SearchTerm, Account, CollectAction], request)
+    full_monitor = await fetch_full_monitor(monitor_id.id)
+    return full_monitor
+
+@app.post("/delete_monitor", response_description="Get monitor")
+async def delete_monitor(request: Request, monitor_id: RequestId, current_email: str = Depends(get_current_user_email)):
+    await mongo([Monitor, SearchTerm, Account, CollectAction], request)
+    await Monitor.get(monitor_id.id).delete()
+
 @app.post("/get_monitor", response_description="Get monitor")
 async def get_monitor(request: Request, monitor_id: RequestId, current_email: str = Depends(get_current_user_email)):
     await mongo([Monitor, SearchTerm, Account, CollectAction], request)
@@ -343,23 +378,26 @@ async def monitor_progress(request: Request, monitor_id: RequestId, current_emai
 @app.post("/run_data_collection", response_description="Run data collection")
 async def run_data_collection(request: Request, monitor_id: RequestId, current_email: str = Depends(get_current_user_email)) -> Monitor:
     await mongo([Post, Monitor,CollectAction, CollectTask, SearchTerm, Account], request)
-    collect_tasks = await CollectTask.find(CollectTask.monitor_id == UUID(monitor_id.id), CollectTask.get_hits_count == True).to_list()
-    
-    out_of_range = []
-    for collect_task in collect_tasks:
-        if collect_task.hits_count and collect_task.hits_count > 10000:
-            out_of_range.append(collect_task)
+    monitor = await Monitor.get(monitor_id.id)
+    if monitor.status != MonitorStatus.collecting or True:
+        collect_tasks = await CollectTask.find(CollectTask.monitor_id == UUID(monitor_id.id), CollectTask.get_hits_count == True).to_list()
+        out_of_range = []
+        for collect_task in collect_tasks:
+            if collect_task.hits_count and collect_task.hits_count > 10000:
+                out_of_range.append(collect_task)
 
-    if len(out_of_range) > 0:
-        raise HTTPException(status_code=412, detail=jsonable_encoder({'out_of_limit': out_of_range}))
-        # return {'out_of_limit': [out_of_range]}
+        if len(out_of_range) > 0:
+            raise HTTPException(status_code=412, detail=jsonable_encoder({'out_of_limit': out_of_range}))
+            # return {'out_of_limit': [out_of_range]}
 
-    await Post.find(In(Post.monitor_ids, [UUID(monitor_id.id)])).delete()
-    await CollectTask.find(CollectTask.monitor_id == UUID(monitor_id.id)).delete()
-    terminate_monitor_tasks(UUID(monitor_id.id))
-    collect_data_cmd(monitor_id.id)
+        await Post.find(In(Post.monitor_ids, [UUID(monitor_id.id)])).delete()
+        await CollectTask.find(CollectTask.monitor_id == UUID(monitor_id.id)).delete()
+        terminate_monitor_tasks(UUID(monitor_id.id))
+        collect_data_cmd(monitor_id.id)
 
     full_monitor = await fetch_full_monitor(monitor_id.id)
+    monitor.status = MonitorStatus.collecting
+    await monitor.save()
     return full_monitor
 
 
@@ -369,59 +407,69 @@ async def collect_sample(request: Request, monitor_id: RequestId, current_email:
 
 
 # TAXONOMY TOOL 
-
+def compare(hits_count_in_results, collect_task):
+    search_term_or_account_1 = hits_count_in_results['item']
+    search_term_or_account_2 = collect_task.accounts[0] if result['type'] == 'accounts' else collect_task.search_terms[0]
+    if type(search_term_or_account_1) == SearchTerm:
+        return search_term_or_account_1.term == search_term_or_account_2.term
+    else:
+        return search_term_or_account_1.platform == search_term_or_account_2.platform and search_term_or_account_1.platform_id == search_term_or_account_2.platform_id
+        
 @app.post("/get_hits_count", response_description="Get amount of post for monitor")
 async def get_hits_count(request: Request, postRequestParamsSinge: RequestId, current_email: str = Depends(get_current_user_email)):
     await mongo([Monitor, CollectTask, SearchTerm, Account], request)
 
     collect_tasks = await CollectTask.find(CollectTask.monitor_id == UUID(postRequestParamsSinge.id), CollectTask.get_hits_count == True).to_list()
+    collect_tasks = [_ for _ in collect_tasks if _.hits_count or _.hits_count == 0 ]
     
     getTottal = lambda search_term_counts: sum([i for i in search_term_counts.values() if isinstance(i,  numbers.Number)])
     
     if not len(collect_tasks): return {
         'is_loading': True,
         'data': []
-     }
+    }
+
     monitor = await Monitor.get(UUID(postRequestParamsSinge.id))
-    
     result = {
         'is_loading': monitor.status <= MonitorStatus.sampling,
         'data': [],
         'type': 'accounts' if collect_tasks[0].accounts and len(collect_tasks[0].accounts) > 0 else 'search_terms' #'account and search_term'
     }
-
-    def compare(hits_count_in_results, collect_task):
-        search_term_or_account_1 = hits_count_in_results['item']
-        search_term_or_account_2 = collect_task.accounts[0] if result['type'] == 'accounts' else collect_task.search_terms[0]
-        if type(search_term_or_account_1) == SearchTerm:
-            return search_term_or_account_1.term == search_term_or_account_2.term
-        else:
-            return search_term_or_account_1.platform == search_term_or_account_2.platform and search_term_or_account_1.platform_id == search_term_or_account_2.platform_id
-        
-
-    for collect_task in collect_tasks:
-
-        hits_count_filterd = list((filter(lambda hits_count_in_results: compare(hits_count_in_results, collect_task) , result['data'])))
-        # print(1111, hits_count_filterd, 2222)
-        if len(hits_count_filterd) == 1:
-            hits_count = hits_count_filterd[0]
-        else:
-            hits_count = {}   
-            hits_count['item'] = collect_task.accounts[0] if result['type'] == 'accounts' else collect_task.search_terms[0]
-            result['data'].append(hits_count)
-
-        hits_count_key = 'hits_count' if result['type'] == 'accounts' else collect_task.platform
-        # print('hits count', hits_count)
-        # print('hits_count_key', hits_count_key)
-        # print('bool-', hits_count_key in hits_count and hits_count[hits_count_key])
-        if hits_count_key in hits_count and (hits_count[hits_count_key] or hits_count[hits_count_key] == 0):
-            if collect_task.hits_count and collect_task.hits_count != 0:
-                hits_count[hits_count_key] += collect_task.hits_count
-        else:
-            hits_count[hits_count_key] = collect_task.hits_count
     
-        # print(4444, result, 5555)
+    if result['type'] == 'accounts':
+        db_items: List[Account] = await Account.find(In(Account.tags, [str(postRequestParamsSinge.id)])).to_list()
+    else:
+        db_items: List[SearchTerm] = await SearchTerm.find(In(SearchTerm.tags, [str(postRequestParamsSinge.id)])).to_list()
+    
+    print('db_items', len(db_items))
+    for db_item in db_items:
+        hits_count = {}
+        hits_count['id'] = db_item.id
+        if result['type'] == 'accounts':
+            hits_count['title'] = db_item.title
+            hits_count['platform'] = db_item.platform
+            hits_count['url'] = db_item.url
+            for collect_task in [_ for _ in collect_tasks if _.accounts[0].platform == db_item.platform and _.accounts[0].platform_id == db_item.platform_id]:
+                hits_count['hits_count'] = hits_count['hits_count'] if 'hits_count' in hits_count else 0
+                hits_count['hits_count'] += collect_task.hits_count
+        else:
+            hits_count['title'] = db_item.term
+            for platform in set([collect_task.platform for collect_task in collect_tasks]):
+                hits_count[platform] = None if monitor.status <= MonitorStatus.sampling else -2
+                collect_task_filtered = [ _ for _ in collect_tasks if _.search_terms[0].term == db_item.term and _.platform == platform]
+                if len(collect_task_filtered):
+                    hits_count[platform] = 0
+                    for collect_task in collect_task_filtered:
+                        hits_count[platform] += collect_task.hits_count
+            # for collect_task in [ _ for _ in collect_tasks if _.search_terms[0].term == db_item.term]:
+            #     hits_count[collect_task.platform] = hits_count[collect_task.platform] if collect_task.platform in hits_count else 0
+            #     hits_count[collect_task.platform] += collect_task.hits_count
+        result['data'].append(hits_count)
 
+    # all_exists = lambda reduced, value : False if not value and type(value) != int else reduced
+    # is_all_loaded = reduce(all_exists,[reduce(all_exists, _.values(), True) for _ in result['data']], True)
+    # result['is_loading'] = False if is_all_loaded else result['is_loading']
+    
     result['data'] = sorted(result['data'], key=getTottal)
     return JSONResponse(content=jsonable_encoder(result), status_code=200)
     
@@ -457,35 +505,49 @@ stop_words.update(e_stop_words)
 
 @app.post("/recommendations", response_description="Get monitor")
 async def recommendations(request: Request, monitor_id: RequestId, current_email: str = Depends(get_current_user_email)):
+    return {
+            'is_loading': False, 'recommendations': []
+        }
     await mongo([Monitor, Post], request)
     """
     :param: monitor_ids: Are ids taken from database. monitor_ids[0] is the id we want to search words for.
     :return: Returns top 10 frequent words.
     """
-    await mongo([Monitor, Post], request)
+    import time
+    start = time.time() 
+    await mongo([Monitor, Post, CollectTask], request)
 
     monitor = await Monitor.get(monitor_id.id)
-    
+    # print(111, time.time() - start)
 
-    monitor_posts = await Post.find({ 'monitor_ids': {'$nin': [UUID(monitor_id.id)] }}).aggregate([{ '$sample': { 'size': 1500 } } ]).to_list()
+    monitor_posts = await Post.find({ 'monitor_ids': {'$in': [UUID(monitor_id.id)] }}).aggregate([{ '$sample': { 'size': 1500 } } ]).to_list()
+    docs = [' '.join([post['text'] for post in monitor_posts])]
+    # print(222, time.time() - start)
+    
     if monitor.status < MonitorStatus.sampling and len(monitor_posts) < 200 :
         return {
             'is_loading': True
         }
     
     sample_size = 500 if len(monitor_posts) < 500 else len(monitor_posts)
-    # sample_size = 100
-    other_posts = await Post.find({ 'monitor_ids': {'$nin': [UUID(monitor_id.id)] }}).aggregate([{ '$sample': { 'size': sample_size } } ]).to_list()
+    monitors = await Monitor.find({}).aggregate([{ '$sample': { 'size': 3 } } ]).to_list()
+    # print(333, time.time() - start)
+
+    for other_monitor in monitors:
+        other_posts = await Post.find({ 'monitor_ids': {'$in': [other_monitor['_id']] }}).limit(sample_size).to_list()
+        # print(len(other_posts))
+        # print(time.time() - start)
+        docs.append(' '.join([post.text for post in other_posts]))
     
-    docs = [' '.join([post['text'] for post in monitor_posts]), ' '.join([post['text'] for post in other_posts])]
     keywords_already_in_monitor = await get_keywords_in_monitor(monitor_id.id)
     
-    for stop_word in keywords_already_in_monitor + ["https","com","news","www","https www","twitter","youtube","facebook", "ly","bit", "bit ly", "instagram", "channel", "http", "subscribe"]:
+    for stop_word in keywords_already_in_monitor + ["web", "app", "https","com","news","www","https www","twitter","youtube","facebook", "ly","bit", "bit ly", "instagram", "channel", "http", "subscribe"]:
         stop_words.add(stop_word.lower())
 
     vectorizer = TfidfVectorizer(stop_words=stop_words, ngram_range=(1, 2))
 
     response = vectorizer.fit_transform(docs)
+
     df_tfidf_sklearn = pd.DataFrame(response.toarray(), columns=vectorizer.get_feature_names_out())
     monitor_tfidfs = df_tfidf_sklearn.iloc[0]
     tokens = df_tfidf_sklearn.columns
@@ -494,9 +556,10 @@ async def recommendations(request: Request, monitor_id: RequestId, current_email
     for tf_idf, token in zip(monitor_tfidfs, tokens):
         tokens_with_tfidfs.append((tf_idf, token))
     words = sorted(tokens_with_tfidfs, reverse=True)[:10]
-    words = [{ 'word': word[1], 'score': word[0]} for word in words]
+    words = [{ 'word': word[1].replace(' ', ' AND '), 'score': word[0]} for word in words if word[0] > 0.2 ]
+    # print(555)
     
-    return JSONResponse(content=jsonable_encoder(words), status_code=200)
+    return JSONResponse(content=jsonable_encoder({'is_loading': False, 'recommendations': words}), status_code=200)
 
 # TAGGING
 

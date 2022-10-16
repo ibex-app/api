@@ -3,10 +3,11 @@ from celery import Celery
 from app.config.constants import CeleryConstants as CC
 from app.util.model_utils import deserialize_from_base64
 from uuid import UUID
+import pymongo
 import re
 from ibex_models import CollectTask, SearchTerm, Post, Account, Monitor, CollectAction
 from ibex_models.platform import Platform
-from model import RequestPostsFilters, RequestPostsFiltersAggregated
+from model import RequestPostsFilters, RequestPostsFiltersAggregated, RequestMonitor
 import os
 from turtle import st
 from beanie import init_beanie
@@ -108,11 +109,16 @@ async def generate_search_criteria(post_request_params: RequestPostsFilters):
 
     return search_criteria
 
-
-async def mongo(classes, request):
+def get_mongo_cs(request):
     sub_domain = request.url._url.split('.ibex-app.com')[0].split('//')[1]
     sub_domain = sub_domain if sub_domain in ['dev', 'un', 'isfed'] else 'dev'
     mongodb_connection_string = os.getenv(f'MONGO_CS')
+    # if not mongodb_connection_string:
+    #     raise 
+    return mongodb_connection_string
+
+async def mongo(classes, request):
+    mongodb_connection_string = get_mongo_cs(request)
 
     client = motor.motor_asyncio.AsyncIOMotorClient(mongodb_connection_string)
     await init_beanie(database=client.ibex, document_models=classes)
@@ -122,10 +128,46 @@ def json_responce(result):
     json_result = json.loads(json_util.dumps(result))
     return JSONResponse(content=jsonable_encoder(json_result), status_code=200)
 
+import pymongo
+
+async def delete_out_of_monitor_posts(monitor_id:UUID, request):
+    mongo_connection_string = get_mongo_cs(request)
+    client = pymongo.MongoClient(mongo_connection_string)
+    db = client["ibex"]
+
+    posts           = db["posts"]
+    search_terms    = db["search_terms"]
+    accounts        = db["accounts"]
+
+    search_terms_ids = [_['_id'] for _ in search_terms.find({'tags' : {'$in': [monitor_id]}})]
+    account_ids = [_['_id'] for _ in accounts.find({'tags' : {'$in': [monitor_id]}})]
+    only_this_monitor_query = {
+        'monitor_ids': [monitor_id]
+    }
+    other_monitors_query = {
+        'monitor_ids': {'$in': [monitor_id]}
+    }
+    if len(search_terms_ids):
+        only_this_monitor_query['search_terms_ids'] = {'$nin': search_terms_ids}
+        other_monitors_query['search_terms_ids'] = {'$nin': search_terms_ids}
+    if len(account_ids):
+        only_this_monitor_query['account_ids'] = {'$nin': search_terms_ids}
+        other_monitors_query['account_ids'] = {'$nin': search_terms_ids}
+        
+    posts.delete_many(only_this_monitor_query)
+    
+    posts_shared_with_other_monitors = list(posts.find(other_monitors_query))
+
+    if len(posts_shared_with_other_monitors):
+        for post in posts_shared_with_other_monitors:
+            post_ = await Post.get(post["_id"])
+            post_.monnitor_ids = [monnitor_id for monnitor_id in post_.monnitor_ids if monnitor_id != monitor_id]
+            await post_.save()
+
 
 async def get_posts(post_request_params: RequestPostsFilters): 
     search_criteria = await generate_search_criteria(post_request_params)
-
+    print('----------------', search_criteria, post_request_params)
     posts = await Post.find(search_criteria)\
         .aggregate([
             {   '$sort': { 'created_at': -1 }},
@@ -176,31 +218,34 @@ async def get_posts(post_request_params: RequestPostsFilters):
     return posts
 
 
-async def modify_monitor_search_terms(postMonitor):
+async def modify_monitor_search_terms(postMonitor: RequestMonitor):
     # if search terms are passed, it needs to be compared to existing list and
     # and if changes are made, existing records needs to be modified
     # finding search terms in db which are no longer preseng in the post request
-    # print(postMonitor)
+    print(postMonitor)
+    postMonitor_search_terms = [_.term for _ in postMonitor.search_terms]
     db_search_terms: List[SearchTerm] = await SearchTerm.find(In(SearchTerm.tags, [str(postMonitor.id)])).to_list()
-    db_search_terms_to_to_remove_from_db: List[SearchTerm] = [search_term for search_term in db_search_terms if
-                                                              search_term.term not in postMonitor.search_terms]
-    # print('passed_search_terms:')
-    # print_(postMonitor.search_terms)
-    # # print('db_search_terms:')
-    # print_(db_search_terms)
-    # # print('db_search_terms_to_to_remove_from_db:')
-    # print_(db_search_terms_to_to_remove_from_db)
+    db_search_terms_to_to_remove_from_db: List[SearchTerm] = [__ for __ in db_search_terms if __.term not in postMonitor_search_terms]
+    # await SearchTerm.find()
+    # client = pymongo.MongoClient("mongodb+srv://root:Dn9B6czCKU6qFCj@cluster0.iejvr.mongodb.net/ibex?retryWrites=true&w=majority")
+    # mydb = client["ibex"]
+    # col_posts = mydb["search_terms"]
+    # query = {'tags':{'$nin': [str(postMonitor.id)]}}
+    # col_posts.delete_many(query)
+    print('passed_search_terms:', [_.term for _ in postMonitor.search_terms])
+    print('db_search_terms:', [_.term for _ in db_search_terms])
+    print('db_search_terms_to_to_remove_from_db:', [_.term for _ in db_search_terms_to_to_remove_from_db])
+
     for search_term in db_search_terms_to_to_remove_from_db:
         search_term.tags = [tag for tag in search_term.tags if tag != str(postMonitor.id)]
         await search_term.save()
 
     # finding search terms that are not taged in db
     db_search_terms_strs: List[str] = [search_term.term for search_term in db_search_terms]
-    search_terms_to_add_to_db: List[str] = [search_term for search_term in postMonitor.search_terms if
+    search_terms_to_add_to_db: List[str] = [search_term for search_term in postMonitor_search_terms if
                                             search_term not in db_search_terms_strs]
-    # print(f'db_search_terms_strs: {db_search_terms_strs}')
-    # print('search_terms_to_add_to_db:')
-    # print_(search_terms_to_add_to_db)
+    print('search_terms_to_add_to_db:', search_terms_to_add_to_db)
+    
     searchs_to_insert = []
     for search_term_str in search_terms_to_add_to_db:
         db_search_term = await SearchTerm.find(SearchTerm.term == search_term_str).to_list()
