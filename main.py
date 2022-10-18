@@ -419,8 +419,8 @@ def compare(hits_count_in_results, collect_task):
 async def get_hits_count(request: Request, postRequestParamsSinge: RequestId, current_email: str = Depends(get_current_user_email)):
     await mongo([Monitor, CollectTask, SearchTerm, Account], request)
 
-    collect_tasks = await CollectTask.find(CollectTask.monitor_id == UUID(postRequestParamsSinge.id), CollectTask.get_hits_count == True).to_list()
-    collect_tasks = [_ for _ in collect_tasks if _.hits_count or _.hits_count == 0 ]
+    all_collect_tasks = await CollectTask.find(CollectTask.monitor_id == UUID(postRequestParamsSinge.id), CollectTask.get_hits_count == True).to_list()
+    collect_tasks = [_ for _ in all_collect_tasks if _.hits_count or _.hits_count == 0 ]
     
     getTottal = lambda search_term_counts: sum([i for i in search_term_counts.values() if isinstance(i,  numbers.Number)])
     
@@ -428,7 +428,9 @@ async def get_hits_count(request: Request, postRequestParamsSinge: RequestId, cu
         'is_loading': True,
         'data': []
     }
-
+    
+    
+    
     monitor = await Monitor.get(UUID(postRequestParamsSinge.id))
     result = {
         'is_loading': monitor.status <= MonitorStatus.sampling,
@@ -454,7 +456,7 @@ async def get_hits_count(request: Request, postRequestParamsSinge: RequestId, cu
                 hits_count['hits_count'] += collect_task.hits_count
         else:
             hits_count['title'] = db_item.term
-            for platform in set([collect_task.platform for collect_task in collect_tasks]):
+            for platform in monitor.platforms:
                 hits_count[platform] = None if monitor.status <= MonitorStatus.sampling else -2
                 collect_task_filtered = [ _ for _ in collect_tasks if _.search_terms[0].term == db_item.term and _.platform == platform]
                 if len(collect_task_filtered):
@@ -466,10 +468,10 @@ async def get_hits_count(request: Request, postRequestParamsSinge: RequestId, cu
             #     hits_count[collect_task.platform] += collect_task.hits_count
         result['data'].append(hits_count)
 
-    # all_exists = lambda reduced, value : False if not value and type(value) != int else reduced
-    # is_all_loaded = reduce(all_exists,[reduce(all_exists, _.values(), True) for _ in result['data']], True)
-    # result['is_loading'] = False if is_all_loaded else result['is_loading']
     
+    is_all_loaded = all([all([value or value == 0 for value in _.values()]) for _ in result['data']])
+    result['is_loading'] = False if is_all_loaded else result['is_loading']
+
     result['data'] = sorted(result['data'], key=getTottal)
     return JSONResponse(content=jsonable_encoder(result), status_code=200)
     
@@ -506,7 +508,11 @@ stop_words.update(e_stop_words)
 @app.post("/recommendations", response_description="Get monitor")
 async def recommendations(request: Request, monitor_id: RequestId, current_email: str = Depends(get_current_user_email)):
     return {
-            'is_loading': False, 'recommendations': []
+            'is_loading': False, 'recommendations': [
+                {'word': 'testword1', 'score': .5},
+                {'word': 'testword2 AND testword3', 'score': .3},
+                {'word': 'testword4', 'score': .23},
+            ]
         }
     await mongo([Monitor, Post], request)
     """

@@ -13,13 +13,18 @@ class RequestPostsFilters(BaseModel):
     has_video:Optional[bool]
     platform: List[Platform] = []
     post_contains: Optional[str]
-    accounts: List[str] = []
     author_platform_id: List[str] = []
     topics: List[str] = []
     persons: List[str] = []
     locations: List[str] = []
     monitor_id: Optional[str]
-    search_terms: Optional[List[str]]
+    
+    account_ids: List[str] = []
+    search_term_ids: List[str] = []
+
+    accounts:List[str] = []
+    search_terms:List[str] = []
+
     shuffle: Optional[bool]
 
     sort_by: Optional[str]
