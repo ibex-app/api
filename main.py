@@ -74,6 +74,7 @@ from model import (RequestPostsFilters,
                    RequestAccountsSearch,
                    RequestMonitorEdit,
                    RequestAddTagToPost)
+from stopwords import low_resource_stopwords
 # OAuth settings
 GOOGLE_CLIENT_ID = os.environ.get('GOOGLE_CLIENT_ID') or None
 GOOGLE_CLIENT_SECRET = os.environ.get('GOOGLE_CLIENT_SECRET') or None
@@ -447,7 +448,7 @@ async def get_hits_count(request: Request, postRequestParamsSinge: RequestId, cu
     else:
         db_items: List[SearchTerm] = await SearchTerm.find(In(SearchTerm.tags, [str(postRequestParamsSinge.id)])).to_list()
     
-    print('db_items', len(db_items))
+    # print('db_items', len(db_items))
     for db_item in db_items:
         hits_count = {}
         hits_count['id'] = db_item.id
@@ -507,24 +508,26 @@ nltk.download('stopwords')
 stop_words = set(stopwords.words('russian'))
 e_stop_words = set(stopwords.words('english'))
 stop_words.update(e_stop_words)
+for stop_word in low_resource_stopwords['web'] + low_resource_stopwords['ka'] + low_resource_stopwords['hy']:
+    stop_words.add(stop_word.lower())
 
 
 @app.post("/recommendations", response_description="Get monitor")
 async def recommendations(request: Request, monitor_id: RequestId, current_email: str = Depends(get_current_user_email)):
-    return {
-            'is_loading': False, 'recommendations': [
-                {'word': 'testword1', 'score': .5},
-                {'word': 'testword2 AND testword3', 'score': .3},
-                {'word': 'testword4', 'score': .23},
-            ]
-        }
+    # return {
+    #         'is_loading': False, 'recommendations': [
+    #             {'word': 'testword1', 'score': .5},
+    #             {'word': 'testword2 AND testword3', 'score': .3},
+    #             {'word': 'testword4', 'score': .23},
+    #         ]
+    #     }
     await mongo([Monitor, Post], request)
     """
     :param: monitor_ids: Are ids taken from database. monitor_ids[0] is the id we want to search words for.
     :return: Returns top 10 frequent words.
     """
-    import time
-    start = time.time() 
+    # import time
+    # start = time.time() 
     await mongo([Monitor, Post, CollectTask], request)
 
     monitor = await Monitor.get(monitor_id.id)
@@ -551,7 +554,7 @@ async def recommendations(request: Request, monitor_id: RequestId, current_email
     
     keywords_already_in_monitor = await get_keywords_in_monitor(monitor_id.id)
     
-    for stop_word in keywords_already_in_monitor + ["web", "app", "https","com","news","www","https www","twitter","youtube","facebook", "ly","bit", "bit ly", "instagram", "channel", "http", "subscribe"]:
+    for stop_word in keywords_already_in_monitor:
         stop_words.add(stop_word.lower())
 
     vectorizer = TfidfVectorizer(stop_words=stop_words, ngram_range=(1, 2))
