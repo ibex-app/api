@@ -128,7 +128,11 @@ async def posts(request: Request, post_request_params: RequestPostsFilters, curr
     if post_request_params.monitor_id:
         monitor = await Monitor.get(UUID(post_request_params.monitor_id))
         collect_tasks = await CollectTask.find(CollectTask.monitor_id == UUID(post_request_params.monitor_id)).to_list()
-        is_loading = len([1 for _ in collect_tasks if _.status != CollectTaskStatus.finalized]) > 0 and monitor.status <= MonitorStatus.sampling
+        if len(collect_tasks) == 0 or monitor.status <= MonitorStatus.sampling:
+            is_loading = True
+        else:
+            is_loading = not all([_.status == CollectTaskStatus.finalized for _ in collect_tasks])
+
     else:
         is_loading = False
     responce = {
