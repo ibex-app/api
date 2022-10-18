@@ -374,7 +374,7 @@ async def monitor_progress(request: Request, monitor_id: RequestId, current_emai
                 Post.platform == platform).count())
         platform_progress['platform'] = platform    
         platform_progress["time_estimate"] = (int(platform_progress["tasks_count"])
-                                      - int(platform_progress["finalized_collect_tasks_count"])) * 4
+                                      - int(platform_progress["finalized_collect_tasks_count"])) * 32
         status_result.append(platform_progress)
     return json_responce(status_result)
 
@@ -384,8 +384,11 @@ async def monitor_progress(request: Request, monitor_id: RequestId, current_emai
 @app.post("/run_data_collection", response_description="Run data collection")
 async def run_data_collection(request: Request, monitor_id: RequestId, current_email: str = Depends(get_current_user_email)) -> Monitor:
     await mongo([Post, Monitor,CollectAction, CollectTask, SearchTerm, Account], request)
-    monitor = await Monitor.get(monitor_id.id)
+    
+    full_monitor = await fetch_full_monitor(monitor_id.id)
+    monitor = full_monitor['monitor']
     if monitor.status < MonitorStatus.collecting:
+        print('[run_data_collection], status is less then collecting', monitor.status)
         collect_tasks = await CollectTask.find(CollectTask.monitor_id == UUID(monitor_id.id), CollectTask.get_hits_count == True).to_list()
         out_of_range = []
         for collect_task in collect_tasks:
@@ -400,10 +403,9 @@ async def run_data_collection(request: Request, monitor_id: RequestId, current_e
         await CollectTask.find(CollectTask.monitor_id == UUID(monitor_id.id)).delete()
         terminate_monitor_tasks(UUID(monitor_id.id))
         collect_data_cmd(monitor_id.id)
-
-    full_monitor = await fetch_full_monitor(monitor_id.id)
-    monitor.status = MonitorStatus.collecting
-    await monitor.save()
+        
+        monitor.status = MonitorStatus.collecting
+        await monitor.save()
     return full_monitor
 
 

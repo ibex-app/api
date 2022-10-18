@@ -168,7 +168,6 @@ async def delete_out_of_monitor_posts(monitor_id:UUID, request):
 
 async def get_posts(post_request_params: RequestPostsFilters): 
     search_criteria = await generate_search_criteria(post_request_params)
-    print('----------------', search_criteria, post_request_params)
     posts = await Post.find(search_criteria)\
         .aggregate([
             {   '$sort': { 'created_at': -1 }},
@@ -286,7 +285,7 @@ async def modify_monitor_accounts(postMonitor):
 
 
 def collect_data_cmd(monitor_id:str, sample:bool = False):
-    cmd = f'python3 /root/data-collection-and-processing/main.py --monitor_id={monitor_id} {"--sample" if sample else ""} >> celery_worker.out'
+    cmd = f'python3 /root/data-collection-and-processing/main.py --monitor_id={monitor_id} {"--sample" if sample else ""} >> celery.out'
     print(f'running command for data collection: {cmd}')
     subprocess.Popen(cmd, stdout=None, stderr=None, stdin=None, close_fds=True, shell=True)
 
