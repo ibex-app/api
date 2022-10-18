@@ -113,8 +113,9 @@ app.add_middleware(SessionMiddleware, secret_key='_SECRET_KEY_')
 async def posts(request: Request, post_request_params: RequestPostsFilters, current_email: str = Depends(get_current_user_email)) -> List[Post]:
     await mongo([Monitor, Post, CollectTask, SearchTerm, CollectAction], request)
     
+    monitor = await Monitor.get(UUID(post_request_params.monitor_id))
+    platforms = monitor.platforms
     if post_request_params.shuffle:
-        platforms = await get_monitor_platforms(UUID(post_request_params.monitor_id))
         if post_request_params.platform and len(post_request_params.platform):
             platforms = list(set(post_request_params.platform) & set(platforms))
         post_request_params.start_index = math.ceil(post_request_params.start_index/len(platforms))
@@ -127,7 +128,6 @@ async def posts(request: Request, post_request_params: RequestPostsFilters, curr
         posts = await get_posts(post_request_params)
     
     if post_request_params.monitor_id:
-        monitor = await Monitor.get(UUID(post_request_params.monitor_id))
         collect_tasks = await CollectTask.find(CollectTask.monitor_id == UUID(post_request_params.monitor_id)).to_list()
         if len(collect_tasks) == 0 or monitor.status <= MonitorStatus.sampling:
             is_loading = True
@@ -358,8 +358,9 @@ async def get_monitors(request: Request, post_tag: RequestTag, current_email: st
 async def monitor_progress(request: Request, monitor_id: RequestId, current_email: str = Depends(get_current_user_email)):
     await mongo([Post, CollectTask, SearchTerm, Account, CollectAction], request)
     status_result = []
-    platforms = await get_monitor_platforms(UUID(monitor_id.id))
-    for platform in platforms:
+    monitor = await Monitor.get(monitor_id.id)
+    
+    for platform in monitor.platforms:
         platform_progress = dict(
             tasks_count=await CollectTask.find(
                 CollectTask.monitor_id == UUID(monitor_id.id),
@@ -384,7 +385,7 @@ async def monitor_progress(request: Request, monitor_id: RequestId, current_emai
 async def run_data_collection(request: Request, monitor_id: RequestId, current_email: str = Depends(get_current_user_email)) -> Monitor:
     await mongo([Post, Monitor,CollectAction, CollectTask, SearchTerm, Account], request)
     monitor = await Monitor.get(monitor_id.id)
-    if monitor.status != MonitorStatus.collecting or True:
+    if monitor.status < MonitorStatus.collecting:
         collect_tasks = await CollectTask.find(CollectTask.monitor_id == UUID(monitor_id.id), CollectTask.get_hits_count == True).to_list()
         out_of_range = []
         for collect_task in collect_tasks:
@@ -552,7 +553,7 @@ async def recommendations(request: Request, monitor_id: RequestId, current_email
         # print(time.time() - start)
         docs.append(' '.join([post.text for post in other_posts]))
     
-    keywords_already_in_monitor = await get_keywords_in_monitor(monitor_id.id)
+    keywords_already_in_monitor = await get_keywords_in_monitor(monitor_id.id, True)
     
     for stop_word in keywords_already_in_monitor:
         stop_words.add(stop_word.lower())

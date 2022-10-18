@@ -2,6 +2,7 @@ import imp
 from celery import Celery
 from app.config.constants import CeleryConstants as CC
 from app.util.model_utils import deserialize_from_base64
+from app.core.declensions import get_declensions
 from uuid import UUID
 import pymongo
 import re
@@ -22,7 +23,7 @@ import json
 from fastapi.responses import JSONResponse, RedirectResponse
 from fastapi.encoders import jsonable_encoder
 from typing import List
-
+import langid
 import subprocess
 
 def terminate_monitor_tasks(monitor_id: UUID):
@@ -290,7 +291,7 @@ def collect_data_cmd(monitor_id:str, sample:bool = False):
     subprocess.Popen(cmd, stdout=None, stderr=None, stdin=None, close_fds=True, shell=True)
 
 
-async def get_keywords_in_monitor(monitor_id):
+async def get_keywords_in_monitor(monitor_id, use_declensions = False):
     collect_tasks = await CollectTask.find(CollectTask.monitor_id == UUID(monitor_id)).to_list()
     getTerm = lambda collect_task: None if not collect_task.search_terms else collect_task.search_terms[0].term
     unique = set([getTerm(collect_task) for collect_task in collect_tasks])
@@ -299,8 +300,16 @@ async def get_keywords_in_monitor(monitor_id):
     for search_term in unique:
         if not search_term: continue
         keywords_already_in_monitor += re.split(' AND | OR | NOT ', search_term)
+    
+    unique_keywords_already_in_monitor = list(set(keywords_already_in_monitor))
+    if not use_declensions:
+        return unique_keywords_already_in_monitor
+    
+    unique_keywords_already_in_monitor_with_decl = []
+    for keyword in unique_keywords_already_in_monitor:
+        unique_keywords_already_in_monitor_with_decl += get_declensions([keyword], langid.classify(keyword)[0]) 
 
-    return list(set(keywords_already_in_monitor))
+    return unique_keywords_already_in_monitor_with_decl
 
 
 async def get_posts_aggregated(post_request_params_aggregated: RequestPostsFiltersAggregated):
