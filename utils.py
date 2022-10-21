@@ -73,13 +73,16 @@ async def get_keywords_in_monitor(monitor_id):
 
 
 async def generate_search_criteria(post_request_params: RequestPostsFilters):
-    search_criteria = {
-        # 'created_at': { '$gte': post_request_params.time_interval_from, '$lte': post_request_params.time_interval_to},
-    }
+    search_criteria = {}
+    if post_request_params.time_interval_from or post_request_params.time_interval_to:
+        search_criteria['created_at'] = {}
+    if post_request_params.time_interval_from:
+        search_criteria['created_at']['$gte'] = post_request_params.time_interval_from
+    if post_request_params.time_interval_to:
+        search_criteria['created_at']['$lte'] = post_request_params.time_interval_to
 
-    if bool(post_request_params.search_terms) and len(post_request_params.search_terms) > 0:
-        search_terms = await SearchTerm.find({'term': {'$in': post_request_params.search_terms}}).to_list()
-        search_criteria['search_terms_ids'] = { '$in': [search_term.id for search_term in search_terms] }
+    if bool(post_request_params.search_term_ids) and len(post_request_params.search_term_ids) > 0:
+        search_criteria['search_terms_ids'] = { '$in': [UUID(id) for id in post_request_params.search_term_ids] }
 
     if bool(post_request_params.monitor_id):
         search_criteria['monitor_ids'] = { '$in': [UUID(post_request_params.monitor_id)] }  
@@ -93,8 +96,8 @@ async def generate_search_criteria(post_request_params: RequestPostsFilters):
     if len(post_request_params.platform) > 0:
         search_criteria['platform'] = { '$in': post_request_params.platform }
 
-    if len(post_request_params.accounts) > 0:
-        search_criteria['account_id'] = { '$in': [Binary(i.bytes, 3) for i in post_request_params.accounts] }
+    if post_request_params.account_ids and len(post_request_params.account_ids) > 0:
+        search_criteria['account_id'] = { '$in': [UUID(id) for id in post_request_params.account_ids] }
 
     if len(post_request_params.author_platform_id) > 0:
         search_criteria['author_platform_id'] = { '$in': post_request_params.author_platform_id }
@@ -211,7 +214,9 @@ async def get_posts(post_request_params: RequestPostsFilters):
             },
         ])\
         .to_list()
-
+    print(22, search_criteria)
+    print(33, post_request_params)
+    
     for post in posts:
         post['api_dump'] = ''
 
@@ -381,7 +386,16 @@ async def fetch_full_monitor(monitor_id: str):
     monitor = await Monitor.get(monitor_id)
     search_terms = await SearchTerm.find(In(SearchTerm.tags, [monitor_id])).to_list()
     accounts = await Account.find(In(SearchTerm.tags, [monitor_id])).to_list()
-    collect_actions = await CollectAction.find(CollectAction.monitor_id == UUID(monitor_id)).to_list()
-    platforms = set([collect_action.platform for collect_action in collect_actions])
-
-    return { 'monitor': monitor, 'search_terms': search_terms, 'accounts': accounts, 'platforms': platforms }
+    # collect_actions = await CollectAction.find(CollectAction.monitor_id == UUID(monitor_id)).to_list()
+    # platforms = set([collect_action.platform for collect_action in collect_actions])
+    monitor_dict = {
+        'id': monitor.id,
+        'title': monitor.title,
+        'descr': monitor.descr,
+        'platforms': monitor.platforms,
+        'date_to': monitor.date_to,
+        'date_from': monitor.date_from,
+        'search_terms': [_.__dict__ for _ in search_terms],
+        'accounts': [_.__dict__ for _ in accounts],
+    }
+    return { 'db_monitor': monitor, 'full_monitor': monitor_dict }

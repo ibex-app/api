@@ -127,15 +127,15 @@ async def posts(request: Request, post_request_params: RequestPostsFilters, curr
     else: 
         posts = await get_posts(post_request_params)
     
+    is_loading = False
+
     if post_request_params.monitor_id:
         collect_tasks = await CollectTask.find(CollectTask.monitor_id == UUID(post_request_params.monitor_id)).to_list()
         if len(collect_tasks) == 0 or monitor.status <= MonitorStatus.sampling:
             is_loading = True
         else:
-            is_loading = not all([_.status == CollectTaskStatus.finalized for _ in collect_tasks])
+            is_loading = not all([_.status == CollectTaskStatus.finalized or _.status == CollectTaskStatus.failed for _ in collect_tasks])
 
-    else:
-        is_loading = False
     responce = {
         'posts': posts,
         'is_loading': is_loading
@@ -323,9 +323,8 @@ async def update_monitor(request: Request, postMonitor: RequestMonitorEdit) -> M
         await modify_monitor_search_terms(postMonitor)
     if postMonitor.accounts:
         await modify_monitor_accounts(postMonitor)
-
-    
-    collect_data_cmd(postMonitor.id, True)
+    if postMonitor.resample or True:
+        collect_data_cmd(postMonitor.id, True)
     
 @app.post("/clone_monitor", response_description="Get monitor")
 async def clone_monitor(request: Request, monitor_id: RequestId, current_email: str = Depends(get_current_user_email)):
@@ -341,8 +340,10 @@ async def delete_monitor(request: Request, monitor_id: RequestId, current_email:
 @app.post("/get_monitor", response_description="Get monitor")
 async def get_monitor(request: Request, monitor_id: RequestId, current_email: str = Depends(get_current_user_email)):
     await mongo([Monitor, SearchTerm, Account, CollectAction], request)
-    full_monitor = await fetch_full_monitor(monitor_id.id)
-    return full_monitor
+    monitor = await fetch_full_monitor(monitor_id.id)
+    return JSONResponse(content=jsonable_encoder(monitor['full_monitor']), status_code=200)
+    
+    
 
 @app.post("/get_monitors", response_description="Get monitors")
 async def get_monitors(request: Request, post_tag: RequestTag, current_email: str = Depends(get_current_user_email)) -> Monitor:
@@ -369,6 +370,9 @@ async def monitor_progress(request: Request, monitor_id: RequestId, current_emai
             finalized_collect_tasks_count=await CollectTask.find(
                 CollectTask.monitor_id == UUID(monitor_id.id), CollectTask.status == CollectTaskStatus.finalized
                 , In(CollectTask.platform, [platform])).count(),
+            failed_collect_tasks_count=await CollectTask.find(
+                CollectTask.monitor_id == UUID(monitor_id.id), CollectTask.status == CollectTaskStatus.failed
+                , In(CollectTask.platform, [platform])).count(),
             posts_count=await Post.find(
                 In(Post.monitor_ids, [UUID(monitor_id.id)]),
                 Post.platform == platform).count())
@@ -386,7 +390,7 @@ async def run_data_collection(request: Request, monitor_id: RequestId, current_e
     await mongo([Post, Monitor,CollectAction, CollectTask, SearchTerm, Account], request)
     
     full_monitor = await fetch_full_monitor(monitor_id.id)
-    monitor = full_monitor['monitor']
+    monitor = full_monitor['db_monitor']
     if monitor.status < MonitorStatus.collecting:
         print('[run_data_collection], status is less then collecting', monitor.status)
         collect_tasks = await CollectTask.find(CollectTask.monitor_id == UUID(monitor_id.id), CollectTask.get_hits_count == True).to_list()
@@ -406,7 +410,7 @@ async def run_data_collection(request: Request, monitor_id: RequestId, current_e
         
         monitor.status = MonitorStatus.collecting
         await monitor.save()
-    return full_monitor
+    return JSONResponse(content=jsonable_encoder(full_monitor['full_monitor']), status_code=200)
 
 
 @app.post("/collect_sample", response_description="Run sample collection pipeline")

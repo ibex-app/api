@@ -55,7 +55,7 @@ class RequestAccountsSearch(BaseModel):
     platforms: List[Platform]
 
 class RequestAccount(BaseModel):
-    _id: Optional[UUID]
+    id: Optional[UUID]
     title: str
     platform: Platform
     platform_id: str
@@ -83,6 +83,7 @@ class RequestMonitorEdit(BaseModel):
     accounts: Optional[List[RequestAccount]]
     platforms: Optional[List[Platform]]
     languages: Optional[List[str]]
+    resample: Optional[bool]
 
 class RequestAddTagToPost(BaseModel):
     id: UUID
