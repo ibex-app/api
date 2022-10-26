@@ -462,9 +462,11 @@ async def get_hits_count(request: Request, postRequestParamsSinge: RequestId, cu
         if result['type'] == 'accounts':
             hits_count['title'] = db_item.title
             hits_count['platform'] = db_item.platform
+            hits_count['platform_id'] = db_item.platform_id
             hits_count['url'] = db_item.url
+            hits_count['hits_count'] = None
             for collect_task in [_ for _ in collect_tasks if _.accounts[0].platform == db_item.platform and _.accounts[0].platform_id == db_item.platform_id]:
-                hits_count['hits_count'] = hits_count['hits_count'] if 'hits_count' in hits_count else 0
+                hits_count['hits_count'] = hits_count['hits_count'] if 'hits_count' in hits_count and hits_count['hits_count'] else 0
                 hits_count['hits_count'] += collect_task.hits_count
         else:
             hits_count['title'] = db_item.term

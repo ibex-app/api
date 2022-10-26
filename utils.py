@@ -214,8 +214,8 @@ async def get_posts(post_request_params: RequestPostsFilters):
             },
         ])\
         .to_list()
-    print(22, search_criteria)
-    print(33, post_request_params)
+    # print(22, search_criteria)
+    # print(33, post_request_params)
     
     for post in posts:
         post['api_dump'] = ''
@@ -237,9 +237,9 @@ async def modify_monitor_search_terms(postMonitor: RequestMonitor):
     # col_posts = mydb["search_terms"]
     # query = {'tags':{'$nin': [str(postMonitor.id)]}}
     # col_posts.delete_many(query)
-    print('passed_search_terms:', [_.term for _ in postMonitor.search_terms])
-    print('db_search_terms:', [_.term for _ in db_search_terms])
-    print('db_search_terms_to_to_remove_from_db:', [_.term for _ in db_search_terms_to_to_remove_from_db])
+    # print('passed_search_terms:', [_.term for _ in postMonitor.search_terms])
+    # print('db_search_terms:', [_.term for _ in db_search_terms])
+    # print('db_search_terms_to_to_remove_from_db:', [_.term for _ in db_search_terms_to_to_remove_from_db])
 
     for search_term in db_search_terms_to_to_remove_from_db:
         search_term.tags = [tag for tag in search_term.tags if tag != str(postMonitor.id)]
@@ -266,25 +266,25 @@ async def modify_monitor_search_terms(postMonitor: RequestMonitor):
 
 
 async def modify_monitor_accounts(postMonitor):
+    
     # if accounts are passed, it needs to be compared to existing list and
     # and if changes are made, existing records needs to be modified
     # accounts: List[RequestAccount]
-    db_accounts: List[SearchTerm] = await Account.find(In(Account.tags, [postMonitor.id])).to_list()
-    account_not_in_monitor = lambda db_account: len(
-        [account for account in postMonitor.accounts if account == db_account.id]) == 0
-    db_accounts_terms_to_to_remove_from_db: List[Account] = [account for account in db_accounts if
-                                                             account_not_in_monitor(account)]
-
-    for account in db_accounts_terms_to_to_remove_from_db:
-        account.tags = [tag for tag in account.tags if tag != postMonitor.id]
+    db_accounts: List[SearchTerm] = await Account.find(In(Account.tags, [str(postMonitor.id)])).to_list()
+    db_accounts_terms_to_remove_from_db: List[Account] = [_ for _ in db_accounts if _.id not in [_.id for _ in postMonitor.accounts]]
+    print('len db_accounts' , len(db_accounts))
+    print('len db_accounts_terms_to_remove_from_db' , len(db_accounts_terms_to_remove_from_db))
+    for account in db_accounts_terms_to_remove_from_db:
+        account.tags = [tag for tag in account.tags if tag != str(postMonitor.id)]
         await account.save()
-
+    
     accounts_to_insert = [Account(
         title=account.title,
         platform=account.platform,
         platform_id=account.platform_id,
         tags=[str(postMonitor.id)],
         url='') for account in postMonitor.accounts if not account.id]
+    print('len accounts_to_insert' , len(accounts_to_insert))
 
     if len(accounts_to_insert): await Account.insert_many(accounts_to_insert)
 

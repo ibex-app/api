@@ -79,6 +79,8 @@ class RequestMonitorEdit(BaseModel):
     id: UUID
     date_from: Optional[datetime]
     date_to: Optional[datetime]
+    title: Optional[str]
+    desct: Optional[str]
     search_terms: Optional[List[RequestSearchTerm]]
     accounts: Optional[List[RequestAccount]]
     platforms: Optional[List[Platform]]
