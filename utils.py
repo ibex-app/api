@@ -330,7 +330,7 @@ async def get_posts_aggregated(post_request_params_aggregated: RequestPostsFilte
     search_criteria = await generate_search_criteria(post_request_params_aggregated.post_request_params)
     
     axisX = f"${post_request_params_aggregated.axisX}" \
-        if post_request_params_aggregated.axisX in ['platform', 'author_platform_id', 'search_term_ids'] \
+        if post_request_params_aggregated.axisX in ['platform', 'author_platform_id', 'search_term_ids', 'account_id'] \
         else f"$labels.{post_request_params_aggregated.axisX}" 
 
     aggregation = {}
@@ -366,7 +366,7 @@ async def get_posts_aggregated(post_request_params_aggregated: RequestPostsFilte
         } 
     })
     
-    if post_request_params_aggregated.axisX not in ['platform', 'author_platform_id', 'search_term_ids']:
+    if post_request_params_aggregated.axisX not in ['platform', 'author_platform_id', 'search_term_ids', 'account_id']:
         aggregations.append({
                 '$lookup': {
                     'from': "tags",
@@ -376,9 +376,14 @@ async def get_posts_aggregated(post_request_params_aggregated: RequestPostsFilte
                 }
             })
         aggregations.append({'$unwind': f"${post_request_params_aggregated.axisX}" })
+    
     if post_request_params_aggregated.axisX == 'search_term_ids':
         aggregations.append({'$lookup': {'from': 'search_terms', 'localField': '_id.label', 'foreignField': '_id', 'as': 'search_term_ids'}})
         aggregations.append({'$unwind': f"$search_term_ids" })
+
+    if post_request_params_aggregated.axisX == 'account_id':
+        aggregations.append({'$lookup': {'from': 'accounts', 'localField': '_id.label', 'foreignField': '_id', 'as': 'account_id'}})
+        aggregations.append({'$unwind': '$account_id'})
 
     else:
         set_ = { '$set': {} }
@@ -412,6 +417,7 @@ async def fetch_full_monitor(monitor_id: str):
         'platforms': monitor.platforms,
         'date_to': monitor.date_to,
         'date_from': monitor.date_from,
+        'status': monitor.status,
         'search_terms': [_.__dict__ for _ in search_terms],
         'accounts': [_.__dict__ for _ in accounts],
     }
