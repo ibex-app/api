@@ -143,21 +143,24 @@ async def delete_out_of_monitor_posts(monitor_id:UUID, request):
     search_terms    = db["search_terms"]
     accounts        = db["accounts"]
 
-    search_term_ids = [_['_id'] for _ in search_terms.find({'tags' : {'$in': [monitor_id]}})]
-    account_ids = [_['_id'] for _ in accounts.find({'tags' : {'$in': [monitor_id]}})]
     only_this_monitor_query = {
         'monitor_ids': [monitor_id]
     }
     other_monitors_query = {
         'monitor_ids': {'$in': [monitor_id]}
     }
+
+    search_term_ids = [str(_['_id']) for _ in search_terms.find({'tags' : {'$in': [str(monitor_id)]}})]
+    account_ids = [str(_['_id']) for _ in accounts.find({'tags' : {'$in': [str(monitor_id)]}})]
     if len(search_term_ids):
         only_this_monitor_query['search_term_ids'] = {'$nin': search_term_ids}
         other_monitors_query['search_term_ids'] = {'$nin': search_term_ids}
     if len(account_ids):
-        only_this_monitor_query['account_ids'] = {'$nin': search_term_ids}
-        other_monitors_query['account_ids'] = {'$nin': search_term_ids}
-        
+        only_this_monitor_query['account_ids'] = {'$nin': account_ids}
+        other_monitors_query['account_ids'] = {'$nin': account_ids}
+    print('other_monitors_query', other_monitors_query)    
+    print('query to delete', only_this_monitor_query)
+
     posts.delete_many(only_this_monitor_query)
     
     posts_shared_with_other_monitors = list(posts.find(other_monitors_query))
@@ -165,7 +168,7 @@ async def delete_out_of_monitor_posts(monitor_id:UUID, request):
     if len(posts_shared_with_other_monitors):
         for post in posts_shared_with_other_monitors:
             post_ = await Post.get(post["_id"])
-            post_.monnitor_ids = [monnitor_id for monnitor_id in post_.monnitor_ids if monnitor_id != monitor_id]
+            post_.monitor_ids = [monnitor_id for monnitor_id in post_.monitor_ids if monnitor_id != monitor_id]
             await post_.save()
 
 
@@ -204,6 +207,13 @@ async def get_posts(post_request_params: RequestPostsFilters):
                         'as': "labels.persons"
                     }
             },
+            # {
+            #     '$lookup': {
+            #         'from': 'search_terms', 
+            #         'localField': 'search_term_ids', 
+            #         'foreignField': '_id', 
+            #         'as': 'search_terms'}
+            # }, 
             {
                 '$lookup': {
                     'from': "accounts",
@@ -320,12 +330,14 @@ async def get_posts_aggregated(post_request_params_aggregated: RequestPostsFilte
     search_criteria = await generate_search_criteria(post_request_params_aggregated.post_request_params)
     
     axisX = f"${post_request_params_aggregated.axisX}" \
-        if post_request_params_aggregated.axisX in ['platform', 'author_platform_id'] \
+        if post_request_params_aggregated.axisX in ['platform', 'author_platform_id', 'search_term_ids'] \
         else f"$labels.{post_request_params_aggregated.axisX}" 
 
     aggregation = {}
     if post_request_params_aggregated.days is None:
-        aggregation = axisX
+        aggregation = {
+            "label": axisX,
+        }
     else:
         aggregation = {
             "label": axisX,
@@ -354,7 +366,7 @@ async def get_posts_aggregated(post_request_params_aggregated: RequestPostsFilte
         } 
     })
     
-    if post_request_params_aggregated.axisX not in ['platform', 'author_platform_id']:
+    if post_request_params_aggregated.axisX not in ['platform', 'author_platform_id', 'search_term_ids']:
         aggregations.append({
                 '$lookup': {
                     'from': "tags",
@@ -364,6 +376,10 @@ async def get_posts_aggregated(post_request_params_aggregated: RequestPostsFilte
                 }
             })
         aggregations.append({'$unwind': f"${post_request_params_aggregated.axisX}" })
+    if post_request_params_aggregated.axisX == 'search_term_ids':
+        aggregations.append({'$lookup': {'from': 'search_terms', 'localField': '_id.label', 'foreignField': '_id', 'as': 'search_term_ids'}})
+        aggregations.append({'$unwind': f"$search_term_ids" })
+
     else:
         set_ = { '$set': {} }
         set_['$set'][post_request_params_aggregated.axisX] = '$_id'

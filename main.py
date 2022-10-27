@@ -309,22 +309,31 @@ async def update_monitor(request: Request, postMonitor: RequestMonitorEdit) -> M
             print('deleteing hits_count_task', hits_count_task)
             await hits_count_task.delete()
 
-    await delete_out_of_monitor_posts(str(postMonitor.id), request)
-
+    
     monitor = await Monitor.get(postMonitor.id)
     monitor.status = MonitorStatus.sampling
     # if date_from and date_to exists in postMonitor, it is updated
     if postMonitor.date_from: monitor.date_from = postMonitor.date_from
     if postMonitor.date_to: monitor.date_to = postMonitor.date_to
     
-    await monitor.save()
+    if postMonitor.platforms:
+        monitor.platforms = postMonitor.platforms
+    elif postMonitor.accounts and len(postMonitor.accounts):
+        monitor.platforms = list(set([_.platform for _ in postMonitor.accounts]))
 
+    await monitor.save()
+    updated = False
     if postMonitor.search_terms:
-        await modify_monitor_search_terms(postMonitor)
+        updated = await modify_monitor_search_terms(postMonitor)
     if postMonitor.accounts:
-        await modify_monitor_accounts(postMonitor)
-    if postMonitor.resample or True:
+        updated = await modify_monitor_accounts(postMonitor)
+    
+    await delete_out_of_monitor_posts(postMonitor.id, request)
+
+    if updated or True:
         collect_data_cmd(postMonitor.id, True)
+
+    
     
 @app.post("/clone_monitor", response_description="Get monitor")
 async def clone_monitor(request: Request, monitor_id: RequestId, current_email: str = Depends(get_current_user_email)):
@@ -436,14 +445,12 @@ async def get_hits_count(request: Request, postRequestParamsSinge: RequestId, cu
     all_collect_tasks = await CollectTask.find(CollectTask.monitor_id == UUID(postRequestParamsSinge.id), CollectTask.get_hits_count == True).to_list()
     collect_tasks = [_ for _ in all_collect_tasks if _.hits_count or _.hits_count == 0 ]
     
-    getTottal = lambda search_term_counts: sum([i for i in search_term_counts.values() if isinstance(i,  numbers.Number)])
+    getTottal = lambda search_term_counts: 0 - sum([i for i in search_term_counts.values() if isinstance(i,  numbers.Number)])
     
     if not len(collect_tasks): return {
         'is_loading': True,
         'data': []
     }
-    
-    
     
     monitor = await Monitor.get(UUID(postRequestParamsSinge.id))
     result = {
@@ -470,6 +477,7 @@ async def get_hits_count(request: Request, postRequestParamsSinge: RequestId, cu
             for collect_task in [_ for _ in collect_tasks if _.accounts[0].platform == db_item.platform and _.accounts[0].platform_id == db_item.platform_id]:
                 hits_count['hits_count'] = hits_count['hits_count'] if 'hits_count' in hits_count and hits_count['hits_count'] else 0
                 hits_count['hits_count'] += collect_task.hits_count
+            hits_count['hits_count'] = -2 if hits_count['hits_count'] != 0 and not hits_count['hits_count'] and not result['is_loading'] else hits_count['hits_count']
         else:
             hits_count['title'] = db_item.term
             for platform in monitor.platforms:
@@ -482,6 +490,8 @@ async def get_hits_count(request: Request, postRequestParamsSinge: RequestId, cu
             # for collect_task in [ _ for _ in collect_tasks if _.search_terms[0].term == db_item.term]:
             #     hits_count[collect_task.platform] = hits_count[collect_task.platform] if collect_task.platform in hits_count else 0
             #     hits_count[collect_task.platform] += collect_task.hits_count
+                hits_count[platform] = -2 if hits_count[platform] != 0 and not hits_count[platform] and not result['is_loading'] else hits_count[platform]
+
         result['data'].append(hits_count)
 
     
