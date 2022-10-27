@@ -8,8 +8,8 @@ from datetime import datetime
 from ibex_models import Platform, Annotation
 
 class RequestPostsFilters(BaseModel):
-    time_interval_from: Optional[str]
-    time_interval_to: Optional[str]
+    time_interval_from: Optional[datetime]
+    time_interval_to: Optional[datetime]
     has_video:Optional[bool]
     platform: List[Platform] = []
     post_contains: Optional[str]

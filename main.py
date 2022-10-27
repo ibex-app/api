@@ -335,7 +335,9 @@ async def clone_monitor(request: Request, monitor_id: RequestId, current_email: 
 @app.post("/delete_monitor", response_description="Get monitor")
 async def delete_monitor(request: Request, monitor_id: RequestId, current_email: str = Depends(get_current_user_email)):
     await mongo([Monitor, SearchTerm, Account, CollectAction], request)
-    await Monitor.get(monitor_id.id).delete()
+    terminate_monitor_tasks(monitor_id.id)
+    monitor = await Monitor.get(monitor_id.id)
+    await monitor.delete()
 
 @app.post("/get_monitor", response_description="Get monitor")
 async def get_monitor(request: Request, monitor_id: RequestId, current_email: str = Depends(get_current_user_email)):

@@ -82,7 +82,7 @@ async def generate_search_criteria(post_request_params: RequestPostsFilters):
         search_criteria['created_at']['$lte'] = post_request_params.time_interval_to
 
     if bool(post_request_params.search_term_ids) and len(post_request_params.search_term_ids) > 0:
-        search_criteria['search_terms_ids'] = { '$in': [UUID(id) for id in post_request_params.search_term_ids] }
+        search_criteria['search_term_ids'] = { '$in': [UUID(id) for id in post_request_params.search_term_ids] }
 
     if bool(post_request_params.monitor_id):
         search_criteria['monitor_ids'] = { '$in': [UUID(post_request_params.monitor_id)] }  
@@ -143,7 +143,7 @@ async def delete_out_of_monitor_posts(monitor_id:UUID, request):
     search_terms    = db["search_terms"]
     accounts        = db["accounts"]
 
-    search_terms_ids = [_['_id'] for _ in search_terms.find({'tags' : {'$in': [monitor_id]}})]
+    search_term_ids = [_['_id'] for _ in search_terms.find({'tags' : {'$in': [monitor_id]}})]
     account_ids = [_['_id'] for _ in accounts.find({'tags' : {'$in': [monitor_id]}})]
     only_this_monitor_query = {
         'monitor_ids': [monitor_id]
@@ -151,12 +151,12 @@ async def delete_out_of_monitor_posts(monitor_id:UUID, request):
     other_monitors_query = {
         'monitor_ids': {'$in': [monitor_id]}
     }
-    if len(search_terms_ids):
-        only_this_monitor_query['search_terms_ids'] = {'$nin': search_terms_ids}
-        other_monitors_query['search_terms_ids'] = {'$nin': search_terms_ids}
+    if len(search_term_ids):
+        only_this_monitor_query['search_term_ids'] = {'$nin': search_term_ids}
+        other_monitors_query['search_term_ids'] = {'$nin': search_term_ids}
     if len(account_ids):
-        only_this_monitor_query['account_ids'] = {'$nin': search_terms_ids}
-        other_monitors_query['account_ids'] = {'$nin': search_terms_ids}
+        only_this_monitor_query['account_ids'] = {'$nin': search_term_ids}
+        other_monitors_query['account_ids'] = {'$nin': search_term_ids}
         
     posts.delete_many(only_this_monitor_query)
     
@@ -368,7 +368,8 @@ async def get_posts_aggregated(post_request_params_aggregated: RequestPostsFilte
         set_ = { '$set': {} }
         set_['$set'][post_request_params_aggregated.axisX] = '$_id'
         aggregations.append(set_)
-
+    print('aggr', search_criteria)
+    print('aggr', aggregations)
     result = await Post.find(search_criteria)\
         .aggregate([
             *aggregations,
