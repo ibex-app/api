@@ -514,7 +514,8 @@ async def search_account(request: Request, search_accounts: RequestAccountsSearc
             'label': account.title,
             'icon': account.platform,
             'platform_id': account.platform_id,
-            'platform': account.platform
+            'platform': account.platform,
+            'url': account.url,
         })
     return JSONResponse(content=jsonable_encoder(responce), status_code=200)
 
