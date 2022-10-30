@@ -150,14 +150,16 @@ async def delete_out_of_monitor_posts(monitor_id:UUID, request):
         'monitor_ids': {'$in': [monitor_id]}
     }
 
-    search_term_ids = [str(_['_id']) for _ in search_terms.find({'tags' : {'$in': [str(monitor_id)]}})]
-    account_ids = [str(_['_id']) for _ in accounts.find({'tags' : {'$in': [str(monitor_id)]}})]
+    search_term_ids = [_['_id'] for _ in search_terms.find({'tags' : {'$in': [str(monitor_id)]}})]
+    account_ids = [_['_id'] for _ in accounts.find({'tags' : {'$in': [str(monitor_id)]}})]
+    
     if len(search_term_ids):
         only_this_monitor_query['search_term_ids'] = {'$nin': search_term_ids}
         other_monitors_query['search_term_ids'] = {'$nin': search_term_ids}
     if len(account_ids):
-        only_this_monitor_query['account_ids'] = {'$nin': account_ids}
-        other_monitors_query['account_ids'] = {'$nin': account_ids}
+        only_this_monitor_query['account_id'] = {'$nin': account_ids}
+        other_monitors_query['account_id'] = {'$nin': account_ids}
+
     print('other_monitors_query', other_monitors_query)    
     print('query to delete', only_this_monitor_query)
 
@@ -380,11 +382,9 @@ async def get_posts_aggregated(post_request_params_aggregated: RequestPostsFilte
     if post_request_params_aggregated.axisX == 'search_term_ids':
         aggregations.append({'$lookup': {'from': 'search_terms', 'localField': '_id.label', 'foreignField': '_id', 'as': 'search_term_ids'}})
         aggregations.append({'$unwind': f"$search_term_ids" })
-
-    if post_request_params_aggregated.axisX == 'account_id':
+    elif post_request_params_aggregated.axisX == 'account_id':
         aggregations.append({'$lookup': {'from': 'accounts', 'localField': '_id.label', 'foreignField': '_id', 'as': 'account_id'}})
         aggregations.append({'$unwind': '$account_id'})
-
     else:
         set_ = { '$set': {} }
         set_['$set'][post_request_params_aggregated.axisX] = '$_id'
@@ -399,11 +399,21 @@ async def get_posts_aggregated(post_request_params_aggregated: RequestPostsFilte
 
     return result
 
-async def get_monitor_platforms(monitor_id: UUID) -> List[Platform]:
-    collect_actions: List[CollectAction] = await CollectAction.find(CollectAction.monitor_id == monitor_id).to_list()
-    platforms = set([collect_action.platform for collect_action in collect_actions])
-    return platforms
-
+async def update_collect_actions(monitor: Monitor):
+    collect_actions_in_db: List[CollectAction] = await CollectAction.find(CollectAction.monitor_id == monitor.id).to_list()
+    
+    platforms = [platform for platform in monitor.platforms if len([_ for _ in collect_actions_in_db if _.platform == platform]) == 0]
+    if len(platforms):
+        collect_actions = [CollectAction(
+                monitor_id = monitor.id,
+                platform = platform, 
+                search_term_tags = [str(monitor.id)], 
+                account_tags=[str(monitor.id)],
+                tags = [],
+            ) for platform in platforms]
+        print(f'Inserting {len(collect_actions)} collect actions...')
+        await CollectAction.insert_many(collect_actions)
+    
 async def fetch_full_monitor(monitor_id: str):    
     monitor = await Monitor.get(monitor_id)
     search_terms = await SearchTerm.find(In(SearchTerm.tags, [monitor_id])).to_list()
@@ -411,7 +421,7 @@ async def fetch_full_monitor(monitor_id: str):
     # collect_actions = await CollectAction.find(CollectAction.monitor_id == UUID(monitor_id)).to_list()
     # platforms = set([collect_action.platform for collect_action in collect_actions])
     monitor_dict = {
-        'id': monitor.id,
+        '_id': monitor.id,
         'title': monitor.title,
         'descr': monitor.descr,
         'platforms': monitor.platforms,

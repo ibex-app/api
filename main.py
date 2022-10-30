@@ -51,7 +51,7 @@ from utils import ( modify_monitor_search_terms,
                     get_keywords_in_monitor,
                     get_posts_aggregated,
                     fetch_full_monitor,
-                    get_monitor_platforms,
+                    update_collect_actions,
                     delete_out_of_monitor_posts)
 from ibex_models import  (MonitorStatus,
                          Post,
@@ -111,7 +111,7 @@ app.add_middleware(SessionMiddleware, secret_key='_SECRET_KEY_')
 
 @app.post("/posts", response_description="Get list of posts", response_model=List[Post])
 async def posts(request: Request, post_request_params: RequestPostsFilters, current_email: str = Depends(get_current_user_email)) -> List[Post]:
-    await mongo([Monitor, Post, CollectTask, SearchTerm, CollectAction], request)
+    await mongo([Monitor, Post, CollectTask, SearchTerm, CollectAction, Account], request)
     
     monitor = await Monitor.get(UUID(post_request_params.monitor_id))
     platforms = monitor.platforms
@@ -249,28 +249,17 @@ async def create_monitor(request: Request, postMonitor: RequestMonitor, current_
                 tags = [str(monitor.id)],
                 url=''
             ))
-        
+
     
-    platforms = postMonitor.platforms if postMonitor.platforms and len(postMonitor.platforms) else [account.platform for account in postMonitor.accounts]
-    
-    # Create single CollectAction per platform
-    collect_actions = [CollectAction(
-            monitor_id = monitor.id,
-            platform = platform, 
-            search_term_tags = [str(monitor.id)], 
-            account_tags=[str(monitor.id)],
-            tags = [],
-        ) for platform in platforms]
-    
-    monitor.collect_actions = [collect_action.id for collect_action in collect_actions]
+    await update_collect_actions(monitor)
+
+    # monitor.collect_actions = [collect_action.id for collect_action in collect_actions]
 
     if len(search_terms): await SearchTerm.insert_many(search_terms)
     if len(accounts): await Account.insert_many(accounts)
 
-    print(f'Inserting {len(collect_actions)} collect actions...')
     print(f'Monitor id {monitor.id}')
     
-    await CollectAction.insert_many(collect_actions)
     await monitor.save()
 
     return monitor
@@ -329,6 +318,7 @@ async def update_monitor(request: Request, postMonitor: RequestMonitorEdit) -> M
         updated = await modify_monitor_accounts(postMonitor)
     
     await delete_out_of_monitor_posts(postMonitor.id, request)
+    await update_collect_actions(monitor)
 
     if updated or True:
         collect_data_cmd(postMonitor.id, True)
@@ -403,7 +393,9 @@ async def run_data_collection(request: Request, monitor_id: RequestId, current_e
     full_monitor = await fetch_full_monitor(monitor_id.id)
     monitor = full_monitor['db_monitor']
     if monitor.status < MonitorStatus.collecting:
+        terminate_monitor_tasks(UUID(monitor_id.id))
         print('[run_data_collection], status is less then collecting', monitor.status)
+        
         collect_tasks = await CollectTask.find(CollectTask.monitor_id == UUID(monitor_id.id), CollectTask.get_hits_count == True).to_list()
         out_of_range = []
         for collect_task in collect_tasks:
@@ -416,11 +408,12 @@ async def run_data_collection(request: Request, monitor_id: RequestId, current_e
 
         await Post.find(In(Post.monitor_ids, [UUID(monitor_id.id)])).delete()
         await CollectTask.find(CollectTask.monitor_id == UUID(monitor_id.id)).delete()
-        terminate_monitor_tasks(UUID(monitor_id.id))
+        
         collect_data_cmd(monitor_id.id)
         
         monitor.status = MonitorStatus.collecting
         await monitor.save()
+        
     return JSONResponse(content=jsonable_encoder(full_monitor['full_monitor']), status_code=200)
 
 
@@ -495,7 +488,7 @@ async def get_hits_count(request: Request, postRequestParamsSinge: RequestId, cu
         result['data'].append(hits_count)
 
     
-    is_all_loaded = all([all([value or value == 0 for value in _.values()]) for _ in result['data']])
+    is_all_loaded = all([all([(value is not None) and (type(value) != int or (value or value == 0)) for value in _.values()]) for _ in result['data']])
     result['is_loading'] = False if is_all_loaded else result['is_loading']
 
     result['data'] = sorted(result['data'], key=getTottal)
@@ -509,6 +502,7 @@ async def search_account(request: Request, search_accounts: RequestAccountsSearc
     
     methods = []
     for platform in collector_classes:
+        if platform in [Platform.vkontakte]: continue
         data_source = collector_classes[platform]()
         methods.append(data_source.get_accounts)
 
