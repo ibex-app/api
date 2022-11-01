@@ -179,7 +179,8 @@ async def download_posts_aggregated(request: Request, post_request_params_aggreg
     result = await get_posts_aggregated(post_request_params_aggregated)
 
     posts_df = pd.DataFrame(result)
-    filename = f'{post_request_params_aggregated.post_request_params.monitor_id}_aggregated_{datetime.now().strftime("%s")}.csv'
+    
+    filename = f'{post_request_params_aggregated.post_request_params.monitor_id}_aggregated_{post_request_params_aggregated.axisX}_{post_request_params_aggregated.axisY}_{datetime.now().strftime("%s")}.csv'
     path = f'/root/static/{filename}'
     posts_df.to_csv(path, index=None)
 

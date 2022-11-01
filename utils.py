@@ -358,15 +358,16 @@ async def get_posts_aggregated(post_request_params_aggregated: RequestPostsFilte
 
     group = {'$group': {
         '_id': aggregation , 
-        'count': {'$sum':1}
+        'count': {'$sum':None}
         } 
     }
 
-    aggregations.append({'$group': {
-        '_id': aggregation , 
-        'count': {'$sum':1}
-        } 
-    })
+    if post_request_params_aggregated.axisY == 'count':
+        group['$group']['count']['$sum'] = 1
+    if post_request_params_aggregated.axisY in ['like', 'comment', 'total']:
+        group['$group']['count']['$sum'] = '$scores.' + post_request_params_aggregated.axisY
+
+    aggregations.append(group)
     
     if post_request_params_aggregated.axisX not in ['platform', 'author_platform_id', 'search_term_ids', 'account_id']:
         aggregations.append({
@@ -382,15 +383,27 @@ async def get_posts_aggregated(post_request_params_aggregated: RequestPostsFilte
     if post_request_params_aggregated.axisX == 'search_term_ids':
         aggregations.append({'$lookup': {'from': 'search_terms', 'localField': '_id.label', 'foreignField': '_id', 'as': 'search_term_ids'}})
         aggregations.append({'$unwind': f"$search_term_ids" })
+        aggregations.append({'$set': { 'term': '$search_term_ids.term' }})
     elif post_request_params_aggregated.axisX == 'account_id':
         aggregations.append({'$lookup': {'from': 'accounts', 'localField': '_id.label', 'foreignField': '_id', 'as': 'account_id'}})
         aggregations.append({'$unwind': '$account_id'})
+        aggregations.append({'$set': { 'account_title': '$account_id.title', 'platform': '$account_id.platform'}})
+    elif post_request_params_aggregated.axisX == 'platform':
+        aggregations.append({'$set': {  'platform': '$platform.label', 'label': '$_id.label' }})
+        aggregations.append({'$project': { 'platform':0}})
+
     else:
         set_ = { '$set': {} }
         set_['$set'][post_request_params_aggregated.axisX] = '$_id'
         aggregations.append(set_)
-    print('aggr', search_criteria)
-    print('aggr', aggregations)
+    aggregations.append({'$set':{
+        'year': '$_id.year',
+        'week': '$_id.week',
+        'day': '$_id.day',
+    }})
+    aggregations.append({'$project': { 'account_id':0, '_id':0 , 'search_term_ids':0}})
+    # print('aggr', search_criteria)
+    # print('aggr', aggregations)
     result = await Post.find(search_criteria)\
         .aggregate([
             *aggregations,
