@@ -404,6 +404,12 @@ async def get_posts_aggregated(post_request_params_aggregated: RequestPostsFilte
     aggregations.append({'$project': { 'account_id':0, '_id':0 , 'search_term_ids':0}})
     # print('aggr', search_criteria)
     # print('aggr', aggregations)
+    aggregations.append({ '$sort': { 
+            'year': -1,
+            'week': -1,
+            'day': -1,
+            'count': -1
+        }})
     result = await Post.find(search_criteria)\
         .aggregate([
             *aggregations,
@@ -445,3 +451,7 @@ async def fetch_full_monitor(monitor_id: str):
         'accounts': [_.__dict__ for _ in accounts],
     }
     return { 'db_monitor': monitor, 'full_monitor': monitor_dict }
+
+def remove_spec_chars(keyword: str) -> str:
+    # TODO more accurate filtering for special chars, while preserving all alphabet characters
+    return re.sub('[!@#$%^&*(),.{}?":|<>_+=„“\\\]', '', keyword)

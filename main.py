@@ -52,7 +52,8 @@ from utils import ( modify_monitor_search_terms,
                     get_posts_aggregated,
                     fetch_full_monitor,
                     update_collect_actions,
-                    delete_out_of_monitor_posts)
+                    delete_out_of_monitor_posts,
+                    remove_spec_chars)
 from ibex_models import  (MonitorStatus,
                          Post,
                          Annotations,
@@ -71,6 +72,7 @@ from model import (RequestPostsFilters,
                    RequestMonitor,
                    RequestTag,
                    RequestId,
+                   RequestSearchTerm,
                    RequestAccountsSearch,
                    RequestMonitorEdit,
                    RequestAddTagToPost)
@@ -213,7 +215,8 @@ async def add_tag_to_post(request: Request, requestAddTagToPost: RequestAddTagTo
 @app.post("/create_monitor", response_description="Create monitor")
 async def create_monitor(request: Request, postMonitor: RequestMonitor, current_email: str = Depends(get_current_user_email)) -> Monitor:
     await mongo([Monitor, Account, SearchTerm, CollectAction], request)
-
+    if postMonitor.search_terms and len(postMonitor.search_terms):
+        postMonitor.search_terms = [remove_spec_chars(_) for _ in postMonitor.search_terms]
     platforms:List[Platform] = postMonitor.platforms or list(set([_.platform for _ in postMonitor.accounts])) 
 
     monitor = Monitor(
@@ -288,6 +291,8 @@ async def update_monitor(request: Request, postMonitor: RequestMonitorEdit) -> M
 
     hits_count_tasks = await CollectTask.find( CollectTask.monitor_id == postMonitor.id, 
                                                 CollectTask.get_hits_count == True).to_list()
+    if postMonitor.search_terms and len(postMonitor.search_terms):
+        postMonitor.search_terms = [_ if _.id else RequestSearchTerm(term=remove_spec_chars(_.term)) for _ in postMonitor.search_terms]
 
     for hits_count_task in hits_count_tasks:
         if ((hits_count_task.search_terms and 
@@ -503,14 +508,14 @@ async def search_account(request: Request, search_accounts: RequestAccountsSearc
     
     methods = []
     for platform in collector_classes:
-        if platform in [Platform.vkontakte]: continue
+        # if platform in [Platform.vkontakte]: continue
         data_source = collector_classes[platform]()
         methods.append(data_source.get_accounts)
 
     accounts_from_platforms = await gather(*[method(search_accounts.substring) for method in methods])
 
     responce = []
-    for account in chain.from_iterable([accounts_from_platform[:3] for accounts_from_platform in accounts_from_platforms]):
+    for account in chain.from_iterable([accounts_from_platform[:5] for accounts_from_platform in accounts_from_platforms]):
         responce.append({
             'label': account.title,
             'icon': account.platform,
