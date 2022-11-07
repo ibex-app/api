@@ -413,7 +413,7 @@ async def run_data_collection(request: Request, monitor_id: RequestId, current_e
             # return {'out_of_limit': [out_of_range]}
 
         await Post.find(In(Post.monitor_ids, [UUID(monitor_id.id)])).delete()
-        await CollectTask.find(CollectTask.monitor_id == UUID(monitor_id.id)).delete()
+        await CollectTask.find(CollectTask.monitor_id == UUID(monitor_id.id), CollectTask.get_hits_count == True).delete()
         
         collect_data_cmd(monitor_id.id)
         
@@ -530,7 +530,8 @@ nltk.download('stopwords')
 stop_words = set(stopwords.words('russian'))
 e_stop_words = set(stopwords.words('english'))
 stop_words.update(e_stop_words)
-for stop_word in low_resource_stopwords['web'] + low_resource_stopwords['ka'] + low_resource_stopwords['hy']:
+# for stop_word in low_resource_stopwords['web'] + low_resource_stopwords['ka'] + low_resource_stopwords['hy']:
+for stop_word in list(chain.from_iterable(low_resource_stopwords.values())):
     stop_words.add(stop_word.lower())
 
 
@@ -563,7 +564,11 @@ async def recommendations(request: Request, monitor_id: RequestId, current_email
         return {
             'is_loading': True
         }
-    
+    if len(monitor_posts) < 10:
+        return {
+            'is_loading': False,
+            'recommendations': []
+        }
     sample_size = 500 if len(monitor_posts) < 500 else len(monitor_posts)
     monitors = await Monitor.find({}).aggregate([{ '$sample': { 'size': 3 } } ]).to_list()
     # print(333, time.time() - start)
@@ -591,7 +596,7 @@ async def recommendations(request: Request, monitor_id: RequestId, current_email
     for tf_idf, token in zip(monitor_tfidfs, tokens):
         tokens_with_tfidfs.append((tf_idf, token))
     words = sorted(tokens_with_tfidfs, reverse=True)[:10]
-    words = [{ 'word': word[1].replace(' ', ' AND '), 'score': word[0]} for word in words if word[0] > 0.2 ]
+    words = [{ 'word': word[1].replace(' ', ' AND '), 'score': word[0]} for word in words if word[0] > 0.1 ]
     # print(555)
     
     return JSONResponse(content=jsonable_encoder({'is_loading': False, 'recommendations': words}), status_code=200)

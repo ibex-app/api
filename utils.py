@@ -226,8 +226,7 @@ async def get_posts(post_request_params: RequestPostsFilters):
             },
         ])\
         .to_list()
-    # print(22, search_criteria)
-    # print(33, post_request_params)
+
     
     for post in posts:
         post['api_dump'] = ''
@@ -355,7 +354,13 @@ async def get_posts_aggregated(post_request_params_aggregated: RequestPostsFilte
     aggregations = []    
     if post_request_params_aggregated.axisX not in ['platform', 'author_platform_id']:
         aggregations.append({'$unwind':axisX })
-
+    if post_request_params_aggregated.axisX == 'search_term_ids':
+        search_term_in_monitor = await SearchTerm.find(In(SearchTerm.tags, [str(post_request_params_aggregated.post_request_params.monitor_id)]))\
+            .aggregate([{'$project': {'term': 0, '_id': 1, 'tags':0, 'revision_id': 0}}])\
+            .to_list()
+        # print(777, search_term_in_monitor)
+        # print(888, [_['_id'] for _ in search_term_in_monitor])
+        aggregations.append({'$match': {'search_term_ids': { '$in':[_['_id'] for _ in search_term_in_monitor] }  }  })
     group = {'$group': {
         '_id': aggregation , 
         'count': {'$sum':None}
@@ -404,6 +409,8 @@ async def get_posts_aggregated(post_request_params_aggregated: RequestPostsFilte
     aggregations.append({'$project': { 'account_id':0, '_id':0 , 'search_term_ids':0}})
     # print('aggr', search_criteria)
     # print('aggr', aggregations)
+    print('[Aggregate] - search_criteria: ', search_criteria)
+    print('[Aggregate] - aggregations: ', aggregations)
     aggregations.append({ '$sort': { 
             'year': -1,
             'week': -1,
@@ -439,6 +446,8 @@ async def fetch_full_monitor(monitor_id: str):
     accounts = await Account.find(In(SearchTerm.tags, [monitor_id])).to_list()
     # collect_actions = await CollectAction.find(CollectAction.monitor_id == UUID(monitor_id)).to_list()
     # platforms = set([collect_action.platform for collect_action in collect_actions])
+    if not monitor:
+        return { 'db_monitor': None, 'full_monitor': None }
     monitor_dict = {
         '_id': monitor.id,
         'title': monitor.title,
@@ -454,4 +463,4 @@ async def fetch_full_monitor(monitor_id: str):
 
 def remove_spec_chars(keyword: str) -> str:
     # TODO more accurate filtering for special chars, while preserving all alphabet characters
-    return re.sub('[!@#$%^&*(),.{}?":|<>_+=„“\\\]', '', keyword)
+    return re.sub('[!$%^&*(),.{}?":|<>_+=„“\\\]', '', keyword)
