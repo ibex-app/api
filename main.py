@@ -557,7 +557,9 @@ async def recommendations(request: Request, monitor_id: RequestId, current_email
     # print(111, time.time() - start)
 
     monitor_posts = await Post.find({ 'monitor_ids': {'$in': [UUID(monitor_id.id)] }}).aggregate([{ '$sample': { 'size': 1500 } } ]).to_list()
-    docs = [' '.join([post['text'] for post in monitor_posts])]
+    docs = [' '.join([post['text'] + ' ' + post['title'] for post in monitor_posts]).lower()]
+    # print('[Recommendation] monitor_posts len', len(monitor_posts))
+
     # print(222, time.time() - start)
     
     if monitor.status < MonitorStatus.sampling and len(monitor_posts) < 200 :
@@ -570,14 +572,15 @@ async def recommendations(request: Request, monitor_id: RequestId, current_email
             'recommendations': []
         }
     sample_size = 500 if len(monitor_posts) < 500 else len(monitor_posts)
-    monitors = await Monitor.find({}).aggregate([{ '$sample': { 'size': 3 } } ]).to_list()
+    monitors = await Monitor.find({ 'monitor_ids': {'$nin': [UUID(monitor_id.id)] }}).aggregate([{ '$sample': { 'size': 3 } } ]).to_list()
     # print(333, time.time() - start)
 
     for other_monitor in monitors:
         other_posts = await Post.find({ 'monitor_ids': {'$in': [other_monitor['_id']] }}).limit(sample_size).to_list()
-        # print(len(other_posts))
+        # print('[Recommendation] other posts len', len(other_posts))
+        if len(other_posts) == 0: continue
         # print(time.time() - start)
-        docs.append(' '.join([post.text for post in other_posts]))
+        docs.append(' '.join([post.text + ' ' + post.title for post in other_posts]).lower())
     
     keywords_already_in_monitor = await get_keywords_in_monitor(monitor_id.id, True)
     
