@@ -53,7 +53,8 @@ from utils import ( modify_monitor_search_terms,
                     fetch_full_monitor,
                     update_collect_actions,
                     delete_out_of_monitor_posts,
-                    remove_spec_chars)
+                    remove_spec_chars,
+                    get_monitor_platfroms_with_posts)
 from ibex_models import  (MonitorStatus,
                          Post,
                          Annotations,
@@ -116,8 +117,10 @@ async def posts(request: Request, post_request_params: RequestPostsFilters, curr
     await mongo([Monitor, Post, CollectTask, SearchTerm, CollectAction, Account], request)
     
     monitor = await Monitor.get(UUID(post_request_params.monitor_id))
-    platforms = monitor.platforms
-    if post_request_params.shuffle:
+    platforms = await get_monitor_platfroms_with_posts(post_request_params)
+    if len(platforms) == 0:
+        posts = []
+    elif post_request_params.shuffle:
         if post_request_params.platform and len(post_request_params.platform):
             platforms = list(set(post_request_params.platform) & set(platforms))
         post_request_params.start_index = math.ceil(post_request_params.start_index/len(platforms))
@@ -242,17 +245,18 @@ async def create_monitor(request: Request, postMonitor: RequestMonitor, current_
     accounts = []
     if postMonitor.accounts:
         for account in postMonitor.accounts:
-            existing_account = await Account.find(Account.platform == account.title).to_list()
-            if existing_account: 
-                existing_account.tags.append(str(monitor.id))
+            existing_account = await Account.find(Account.platform == account.platform, Account.platform_id == account.platform_id).to_list()
+            if len(existing_account): 
+                existing_account[0].tags.append(str(monitor.id))
+                await existing_account.save()
             else:
                 accounts.append(Account(
-                title = account.title, 
-                platform = account.platform, 
-                platform_id = account.platform_id, 
-                tags = [str(monitor.id)],
-                url=''
-            ))
+                    title = account.title, 
+                    platform = account.platform, 
+                    platform_id = account.platform_id, 
+                    tags = [str(monitor.id)],
+                    url=''
+                ))
 
     
     await update_collect_actions(monitor)
@@ -372,14 +376,19 @@ async def monitor_progress(request: Request, monitor_id: RequestId, current_emai
         platform_progress = dict(
             tasks_count=await CollectTask.find(
                 CollectTask.monitor_id == UUID(monitor_id.id),
-                In(CollectTask.platform, [platform])
+                In(CollectTask.platform, [platform]),
+                CollectTask.get_hits_count != True
             ).count(),
             finalized_collect_tasks_count=await CollectTask.find(
-                CollectTask.monitor_id == UUID(monitor_id.id), CollectTask.status == CollectTaskStatus.finalized
-                , In(CollectTask.platform, [platform])).count(),
+                CollectTask.monitor_id == UUID(monitor_id.id), 
+                CollectTask.status == CollectTaskStatus.finalized, 
+                In(CollectTask.platform, [platform]),
+                CollectTask.get_hits_count != True).count(),
             failed_collect_tasks_count=await CollectTask.find(
-                CollectTask.monitor_id == UUID(monitor_id.id), CollectTask.status == CollectTaskStatus.failed
-                , In(CollectTask.platform, [platform])).count(),
+                CollectTask.monitor_id == UUID(monitor_id.id), 
+                CollectTask.status == CollectTaskStatus.failed, 
+                In(CollectTask.platform, [platform]),
+                CollectTask.get_hits_count != True).count(),
             posts_count=await Post.find(
                 In(Post.monitor_ids, [UUID(monitor_id.id)]),
                 Post.platform == platform).count())
@@ -413,7 +422,7 @@ async def run_data_collection(request: Request, monitor_id: RequestId, current_e
             # return {'out_of_limit': [out_of_range]}
 
         await Post.find(In(Post.monitor_ids, [UUID(monitor_id.id)])).delete()
-        await CollectTask.find(CollectTask.monitor_id == UUID(monitor_id.id), CollectTask.get_hits_count == True).delete()
+        await CollectTask.find(CollectTask.monitor_id == UUID(monitor_id.id), CollectTask.get_hits_count != True).delete()
         
         collect_data_cmd(monitor_id.id)
         
@@ -668,7 +677,7 @@ async def save_and_next(request: Request, request_annotations: RequestAnnotation
 @app.get('/login')
 async def login(request: Request):
     env = 'dev' if 'localhost' in request.headers['referer'] else 'prod'
-    host = 'https://dev.ibex-app.com/' if env == 'dev' else request.headers['referer'].rstrip('login')
+    host = 'https://un.ibex-app.com/' if env == 'dev' else request.headers['referer'].rstrip('login')
     redirect_uri = f'{host}api/token?env={env}'
     redirect = await oauth.google.authorize_redirect(request, redirect_uri)
     

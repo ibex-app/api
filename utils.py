@@ -283,8 +283,8 @@ async def modify_monitor_accounts(postMonitor):
     # accounts: List[RequestAccount]
     db_accounts: List[SearchTerm] = await Account.find(In(Account.tags, [str(postMonitor.id)])).to_list()
     db_accounts_terms_to_remove_from_db: List[Account] = [_ for _ in db_accounts if _.id not in [_.id for _ in postMonitor.accounts]]
-    print('len db_accounts' , len(db_accounts))
-    print('len db_accounts_terms_to_remove_from_db' , len(db_accounts_terms_to_remove_from_db))
+    # print('len db_accounts' , len(db_accounts))
+    # print('len db_accounts_terms_to_remove_from_db' , len(db_accounts_terms_to_remove_from_db))
     for account in db_accounts_terms_to_remove_from_db:
         account.tags = [tag for tag in account.tags if tag != str(postMonitor.id)]
         await account.save()
@@ -409,8 +409,8 @@ async def get_posts_aggregated(post_request_params_aggregated: RequestPostsFilte
     aggregations.append({'$project': { 'account_id':0, '_id':0 , 'search_term_ids':0}})
     # print('aggr', search_criteria)
     # print('aggr', aggregations)
-    print('[Aggregate] - search_criteria: ', search_criteria)
-    print('[Aggregate] - aggregations: ', aggregations)
+    # print('[Aggregate] - search_criteria: ', search_criteria)
+    # print('[Aggregate] - aggregations: ', aggregations)
     aggregations.append({ '$sort': { 
             'year': -1,
             'week': -1,
@@ -464,3 +464,16 @@ async def fetch_full_monitor(monitor_id: str):
 def remove_spec_chars(keyword: str) -> str:
     # TODO more accurate filtering for special chars, while preserving all alphabet characters
     return re.sub('[!$%^&*(),.{}?":|<>_+=„“\\\]', '', keyword)
+
+
+
+
+async def get_monitor_platfroms_with_posts(post_request_params: RequestPostsFilters):
+    search_criteria = await generate_search_criteria(post_request_params)
+    platforms = await Post.find(search_criteria).aggregate([
+        {'$group': {'_id': {'label': '$platform'}, 'count': {'$sum': 1}}}, 
+        {'$set': {'platform': '$_id.label'}}, 
+        {'$project': {'_id': 0, 'count': 0}}
+    ]).to_list()
+
+    return [_['platform'] for _ in platforms]
