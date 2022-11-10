@@ -59,6 +59,7 @@ class RequestAccount(BaseModel):
     title: str
     platform: Platform
     platform_id: str
+    url: str
 
 class RequestMonitor(BaseModel):
     title: str
