@@ -245,10 +245,10 @@ async def create_monitor(request: Request, postMonitor: RequestMonitor, current_
     accounts = []
     if postMonitor.accounts:
         for account in postMonitor.accounts:
-            existing_account = await Account.find(Account.platform == account.platform, Account.platform_id == account.platform_id).to_list()
-            if len(existing_account): 
-                existing_account[0].tags.append(str(monitor.id))
-                await existing_account.save()
+            existing_accounts = await Account.find(Account.platform == account.platform, Account.platform_id == account.platform_id).to_list()
+            if len(existing_accounts): 
+                existing_accounts[0].tags.append(str(monitor.id))
+                await existing_accounts.save()
             else:
                 accounts.append(Account(
                     title = account.title, 
