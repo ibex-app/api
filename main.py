@@ -256,7 +256,7 @@ async def create_monitor(request: Request, postMonitor: RequestMonitor, current_
                     platform = account.platform, 
                     platform_id = account.platform_id, 
                     tags = [str(monitor.id)],
-                    url=''
+                    url=account.url
                 ))
 
     
