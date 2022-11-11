@@ -115,7 +115,7 @@ app.add_middleware(SessionMiddleware, secret_key='_SECRET_KEY_')
 @app.post("/posts", response_description="Get list of posts", response_model=List[Post])
 async def posts(request: Request, post_request_params: RequestPostsFilters, current_email: str = Depends(get_current_user_email)) -> List[Post]:
     await mongo([Monitor, Post, CollectTask, SearchTerm, CollectAction, Account], request)
-    
+    if post_request_params.monitor_id == 'undefined': return []
     monitor = await Monitor.get(UUID(post_request_params.monitor_id))
     platforms = await get_monitor_platfroms_with_posts(post_request_params)
     if len(platforms) == 0:
@@ -562,7 +562,7 @@ async def recommendations(request: Request, monitor_id: RequestId, current_email
     # import time
     # start = time.time() 
     await mongo([Monitor, Post, CollectTask], request)
-
+    if monitor_id.id == 'undefined': return []
     monitor = await Monitor.get(monitor_id.id)
     # print(111, time.time() - start)
 
