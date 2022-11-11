@@ -441,6 +441,7 @@ async def update_collect_actions(monitor: Monitor):
         await CollectAction.insert_many(collect_actions)
     
 async def fetch_full_monitor(monitor_id: str):    
+    if monitor_id == 'undefined' : return { 'db_monitor': None, 'full_monitor': None }
     monitor = await Monitor.get(monitor_id)
     search_terms = await SearchTerm.find(In(SearchTerm.tags, [monitor_id])).to_list()
     accounts = await Account.find(In(SearchTerm.tags, [monitor_id])).to_list()

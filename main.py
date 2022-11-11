@@ -450,7 +450,10 @@ def compare(hits_count_in_results, collect_task):
 @app.post("/get_hits_count", response_description="Get amount of post for monitor")
 async def get_hits_count(request: Request, postRequestParamsSinge: RequestId, current_email: str = Depends(get_current_user_email)):
     await mongo([Monitor, CollectTask, SearchTerm, Account], request)
-
+    if postRequestParamsSinge.id == 'undefined' : return {
+        'is_loading': True,
+        'data': []
+    }
     all_collect_tasks = await CollectTask.find(CollectTask.monitor_id == UUID(postRequestParamsSinge.id), CollectTask.get_hits_count == True).to_list()
     collect_tasks = [_ for _ in all_collect_tasks if _.hits_count or _.hits_count == 0 ]
     
