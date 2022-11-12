@@ -705,14 +705,14 @@ async def auth(request: Request):
 
     user_data = await oauth.google.parse_id_token(access_token, access_token['userinfo']['nonce'])
     valid_accounts = os.environ.get('VALID_ACCOUNTS').split('__SEP__')
-    if True or sub_domain == 'tag':
-        
-        obj_ = {
-            'result': True,
-            'access_token': create_token(user_data['email']).decode("utf-8") ,
-            'refresh_token': create_refresh_token(user_data['email']).decode("utf-8") ,
-        }
-        return_url = 'http://localhost:3000' if request.query_params['env'] == 'dev' else f'https://{sub_domain}.ibex-app.com'
-        return RedirectResponse(url=f"{return_url}?access_token={obj_['access_token']}&user={user_data['email']}")
+    # if True or sub_domain == 'tag':
+
+    obj_ = {
+        'result': True,
+        'access_token': create_token(user_data['email']).decode("utf-8") ,
+        'refresh_token': create_refresh_token(user_data['email']).decode("utf-8") ,
+    }
+    return_url = 'http://localhost:3000' if request.query_params['env'] == 'dev' else f'https://{sub_domain}.ibex-app.com'
+    return RedirectResponse(url=f"{return_url}?access_token={obj_['access_token']}&user={user_data['email']}")
     print('no email')
     raise CREDENTIALS_EXCEPTION
