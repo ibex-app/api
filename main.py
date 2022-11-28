@@ -84,7 +84,7 @@ from stopwords import low_resource_stopwords
 import os
 from dotenv import load_dotenv
 env = os.getenv('ENV')
-load_dotenv('/home/.{}.env')
+load_dotenv(f'/home/.{env.lower()}.env')
 
 # OAuth settings
 GOOGLE_CLIENT_ID = os.environ.get('GOOGLE_CLIENT_ID') or None
