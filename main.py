@@ -79,6 +79,13 @@ from model import (RequestPostsFilters,
                    RequestMonitorEdit,
                    RequestAddTagToPost)
 from stopwords import low_resource_stopwords
+
+
+import os
+from dotenv import load_dotenv
+env = os.getenv('ENV')
+load_dotenv('/home/.{}.env')
+
 # OAuth settings
 GOOGLE_CLIENT_ID = os.environ.get('GOOGLE_CLIENT_ID') or None
 GOOGLE_CLIENT_SECRET = os.environ.get('GOOGLE_CLIENT_SECRET') or None
