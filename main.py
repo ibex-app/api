@@ -45,7 +45,8 @@ from utils import ( modify_monitor_search_terms,
                     get_keywords_in_monitor, 
                     get_keywords_in_monitor, 
                     generate_search_criteria, 
-                    mongo, 
+                    mongo,
+                    get_subdomain,
                     json_responce, 
                     get_posts,
                     get_keywords_in_monitor,
@@ -332,7 +333,8 @@ async def update_monitor(request: Request, postMonitor: RequestMonitorEdit) -> M
     await update_collect_actions(monitor)
 
     if updated or True:
-        collect_data_cmd(postMonitor.id, True)
+        sub_domain = get_subdomain(request)
+        collect_data_cmd(postMonitor.id, sub_domain, True)
 
     
     
@@ -424,8 +426,8 @@ async def run_data_collection(request: Request, monitor_id: RequestId, current_e
 
         await Post.find(In(Post.monitor_ids, [UUID(monitor_id.id)])).delete()
         await CollectTask.find(CollectTask.monitor_id == UUID(monitor_id.id), CollectTask.get_hits_count != True).delete()
-        
-        collect_data_cmd(monitor_id.id)
+        sub_domain = get_subdomain(request)
+        collect_data_cmd(monitor_id.id, sub_domain)
         
         monitor.status = MonitorStatus.collecting
         await monitor.save()
@@ -435,7 +437,8 @@ async def run_data_collection(request: Request, monitor_id: RequestId, current_e
 
 @app.post("/collect_sample", response_description="Run sample collection pipeline")
 async def collect_sample(request: Request, monitor_id: RequestId, current_email: str = Depends(get_current_user_email)):
-    collect_data_cmd(monitor_id.id, True)
+    sub_domain = get_subdomain(request)
+    collect_data_cmd(monitor_id.id, sub_domain, True)
 
 
 # TAXONOMY TOOL 

@@ -113,8 +113,11 @@ async def generate_search_criteria(post_request_params: RequestPostsFilters):
 
     return search_criteria
 
+def get_subdomain(request)
+    return request.url._url.split('.ibex-app.com')[0].split('//')[1]
+
 def get_mongo_cs(request):
-    sub_domain = request.url._url.split('.ibex-app.com')[0].split('//')[1]
+    sub_domain = get_subdomain(request)
     sub_domain = sub_domain if sub_domain in ['dev', 'un', 'isfed'] else 'dev'
     mongodb_connection_string = os.getenv(f'MONGO_CS')
     # if not mongodb_connection_string:
@@ -300,8 +303,8 @@ async def modify_monitor_accounts(postMonitor):
     if len(accounts_to_insert): await Account.insert_many(accounts_to_insert)
 
 
-def collect_data_cmd(monitor_id:str, sample:bool = False):
-    cmd = f'python3 /root/data-collection-and-processing/main.py --monitor_id={monitor_id} {"--sample" if sample else ""} >> celery.out'
+def collect_data_cmd(monitor_id:str, sub_domain:str, sample:bool = False):
+    cmd = f'python3 /root/data-collection-and-processing/main.py --sub_domain={sub_domain} --monitor_id={monitor_id} {"--sample" if sample else ""} >> celery.out'
     print(f'running command for data collection: {cmd}')
     subprocess.Popen(cmd, stdout=None, stderr=None, stdin=None, close_fds=True, shell=True)
 
