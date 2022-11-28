@@ -304,7 +304,7 @@ async def modify_monitor_accounts(postMonitor):
 
 
 def collect_data_cmd(monitor_id:str, sub_domain:str, sample:bool = False):
-    cmd = f'python3 /root/data-collection-and-processing/main.py --sub_domain={sub_domain} --monitor_id={monitor_id} {"--sample" if sample else ""} >> celery.out'
+    cmd = f'python3 /root/data-collection-and-processing/main.py --env={sub_domain} --monitor_id={monitor_id} {"--sample" if sample else ""} >> celery.out'
     print(f'running command for data collection: {cmd}')
     subprocess.Popen(cmd, stdout=None, stderr=None, stdin=None, close_fds=True, shell=True)
 
