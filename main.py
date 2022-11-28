@@ -685,9 +685,6 @@ async def login(request: Request):
     redirect_uri = f'{host}api/token?env={env}'
     redirect = await oauth.google.authorize_redirect(request, redirect_uri)
     
-    # print(0, redirect_uri)
-
-    # print(1111, redirect.__dict__)
     return redirect
 
 
