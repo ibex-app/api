@@ -113,7 +113,7 @@ async def generate_search_criteria(post_request_params: RequestPostsFilters):
 
     return search_criteria
 
-def get_subdomain(request)
+def get_subdomain(request):
     return request.url._url.split('.ibex-app.com')[0].split('//')[1]
 
 def get_mongo_cs(request):
