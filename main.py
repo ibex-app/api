@@ -534,8 +534,8 @@ async def search_account(request: Request, search_accounts: RequestAccountsSearc
         # if platform in [Platform.vkontakte]: continue
         data_source = collector_classes[platform]()
         methods.append(data_source.get_accounts)
-
-    accounts_from_platforms = await gather(*[method(search_accounts.substring) for method in methods])
+    sub_domain = get_subdomain(request)
+    accounts_from_platforms = await gather(*[method(search_accounts.substring, env=sub_domain) for method in methods])
 
     responce = []
     for account in chain.from_iterable([accounts_from_platform[:5] for accounts_from_platform in accounts_from_platforms]):
