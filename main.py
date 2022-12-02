@@ -55,7 +55,8 @@ from utils import ( modify_monitor_search_terms,
                     update_collect_actions,
                     delete_out_of_monitor_posts,
                     remove_spec_chars,
-                    get_monitor_platfroms_with_posts)
+                    get_monitor_platfroms_with_posts, 
+                    search_accounts_safe)
 from ibex_models import  (MonitorStatus,
                          Post,
                          Annotations,
@@ -522,12 +523,11 @@ async def get_hits_count(request: Request, postRequestParamsSinge: RequestId, cu
 
     result['data'] = sorted(result['data'], key=getTottal)
     return JSONResponse(content=jsonable_encoder(result), status_code=200)
-    
+
 
 @app.post("/search_account", response_description="Search accounts by string across all platforms")
 async def search_account(request: Request, search_accounts: RequestAccountsSearch, current_email: str = Depends(get_current_user_email)):
     await mongo([Account], request)
-    accounts: List[Account] = []
     
     methods = []
     for platform in collector_classes:
@@ -535,7 +535,7 @@ async def search_account(request: Request, search_accounts: RequestAccountsSearc
         data_source = collector_classes[platform]()
         methods.append(data_source.get_accounts)
     sub_domain = get_subdomain(request)
-    accounts_from_platforms = await gather(*[method(search_accounts.substring, env=sub_domain) for method in methods])
+    accounts_from_platforms = await gather(*[search_accounts_safe(method, search_accounts.substring, sub_domain) for method in methods])
 
     responce = []
     for account in chain.from_iterable([accounts_from_platform[:5] for accounts_from_platform in accounts_from_platforms]):

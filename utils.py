@@ -481,3 +481,9 @@ async def get_monitor_platfroms_with_posts(post_request_params: RequestPostsFilt
     ]).to_list()
 
     return [_['platform'] for _ in platforms]
+
+async def search_accounts_safe(method, query, env):
+    try:
+        return await method(query, env=env)
+    except:
+        return []
