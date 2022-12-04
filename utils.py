@@ -398,7 +398,7 @@ async def get_posts_aggregated(post_request_params_aggregated: RequestPostsFilte
         aggregations.append({'$set': {  'platform': '$platform.label', 'label': '$_id.label' }})
         aggregations.append({'$project': { 'platform':0}})
     elif post_request_params_aggregated.axisX == 'language':
-        aggregations.append({'$set': {'language': '$_id.label'}})
+        aggregations.append({'$set': {'label': '$_id.label'}})
     else:
         set_ = { '$set': {} }
         set_['$set'][post_request_params_aggregated.axisX] = '$_id'
