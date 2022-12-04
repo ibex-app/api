@@ -334,7 +334,7 @@ async def get_posts_aggregated(post_request_params_aggregated: RequestPostsFilte
     search_criteria = await generate_search_criteria(post_request_params_aggregated.post_request_params)
     
     axisX = f"${post_request_params_aggregated.axisX}" \
-        if post_request_params_aggregated.axisX in ['platform', 'author_platform_id', 'search_term_ids', 'account_id'] \
+        if post_request_params_aggregated.axisX in ['platform', 'author_platform_id', 'search_term_ids', 'account_id', 'language'] \
         else f"$labels.{post_request_params_aggregated.axisX}" 
 
     aggregation = {}
@@ -355,14 +355,12 @@ async def get_posts_aggregated(post_request_params_aggregated: RequestPostsFilte
             aggregation["day"] = { "$dayOfYear": "$created_at" }
     
     aggregations = []    
-    if post_request_params_aggregated.axisX not in ['platform', 'author_platform_id']:
+    if post_request_params_aggregated.axisX not in ['platform', 'author_platform_id', 'language']:
         aggregations.append({'$unwind':axisX })
     if post_request_params_aggregated.axisX == 'search_term_ids':
         search_term_in_monitor = await SearchTerm.find(In(SearchTerm.tags, [str(post_request_params_aggregated.post_request_params.monitor_id)]))\
             .aggregate([{'$project': {'term': 0, '_id': 1, 'tags':0, 'revision_id': 0}}])\
             .to_list()
-        # print(777, search_term_in_monitor)
-        # print(888, [_['_id'] for _ in search_term_in_monitor])
         aggregations.append({'$match': {'search_term_ids': { '$in':[_['_id'] for _ in search_term_in_monitor] }  }  })
     group = {'$group': {
         '_id': aggregation , 
@@ -377,7 +375,7 @@ async def get_posts_aggregated(post_request_params_aggregated: RequestPostsFilte
 
     aggregations.append(group)
     
-    if post_request_params_aggregated.axisX not in ['platform', 'author_platform_id', 'search_term_ids', 'account_id']:
+    if post_request_params_aggregated.axisX not in ['platform', 'author_platform_id', 'search_term_ids', 'account_id', 'language']:
         aggregations.append({
                 '$lookup': {
                     'from': "tags",
