@@ -412,8 +412,8 @@ async def get_posts_aggregated(post_request_params_aggregated: RequestPostsFilte
     aggregations.append({'$project': { 'account_id':0, '_id':0 , 'search_term_ids':0}})
     # print('aggr', search_criteria)
     # print('aggr', aggregations)
-    # print('[Aggregate] - search_criteria: ', search_criteria)
-    # print('[Aggregate] - aggregations: ', aggregations)
+    print('[Aggregate] - search_criteria: ', search_criteria)
+    print('[Aggregate] - aggregations: ', aggregations)
     aggregations.append({ '$sort': { 
             'year': -1,
             'week': -1,
