@@ -691,7 +691,7 @@ async def save_and_next(request: Request, request_annotations: RequestAnnotation
 @app.get('/login')
 async def login(request: Request):
     env = 'dev' if 'localhost' in request.headers['referer'] else 'prod'
-    host = 'https://un.ibex-app.com/' if env == 'dev' else request.headers['referer'].rstrip('login')
+    host = 'https://dev.ibex-app.com/' if env == 'dev' else request.headers['referer'].rstrip('login')
     redirect_uri = f'{host}api/token?env={env}'
     # print(111, redirect_uri, request.headers['referer'])
     redirect = await oauth.google.authorize_redirect(request, redirect_uri)
