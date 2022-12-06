@@ -117,8 +117,6 @@ def get_subdomain(request):
     return request.url._url.split('.ibex-app.com')[0].split('//')[1]
 
 def get_mongo_cs(request):
-    sub_domain = get_subdomain(request)
-    sub_domain = sub_domain if sub_domain in ['dev', 'un', 'isfed'] else 'dev'
     mongodb_connection_string = os.getenv(f'MONGO_CS')
     # if not mongodb_connection_string:
     #     raise 

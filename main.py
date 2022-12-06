@@ -718,6 +718,7 @@ async def auth(request: Request):
             'access_token': create_token(user_data['email']).decode("utf-8") ,
             'refresh_token': create_refresh_token(user_data['email']).decode("utf-8") ,
         }
+        sub_domain = 'dev' if sub_domain == 'tag' else sub_domain
         return_url = 'http://localhost:3000' if request.query_params['env'] == 'dev' else f'https://{sub_domain}.ibex-app.com'
         return RedirectResponse(url=f"{return_url}?access_token={obj_['access_token']}&user={user_data['email']}")
     print('no email')
