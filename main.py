@@ -692,7 +692,6 @@ async def save_and_next(request: Request, request_annotations: RequestAnnotation
 async def login(request: Request):
     env = 'dev' if 'localhost' in request.headers['referer'] else 'prod'
     host = 'https://un.ibex-app.com/' if env == 'dev' else request.headers['referer'].rstrip('login')
-    host = host.replace('tag.', 'dev.')
     redirect_uri = f'{host}api/token?env={env}'
     redirect = await oauth.google.authorize_redirect(request, redirect_uri)
     
@@ -719,7 +718,6 @@ async def auth(request: Request):
             'access_token': create_token(user_data['email']).decode("utf-8") ,
             'refresh_token': create_refresh_token(user_data['email']).decode("utf-8") ,
         }
-        sub_domain = 'dev' if sub_domain == 'tag' else sub_domain
         return_url = 'http://localhost:3000' if request.query_params['env'] == 'dev' else f'https://{sub_domain}.ibex-app.com'
         return RedirectResponse(url=f"{return_url}?access_token={obj_['access_token']}&user={user_data['email']}")
     print('no email')
