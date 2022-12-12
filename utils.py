@@ -176,10 +176,11 @@ async def delete_out_of_monitor_posts(monitor_id:UUID, request):
 
 
 async def get_posts(post_request_params: RequestPostsFilters): 
-    search_criteria = await generate_search_criteria(post_request_params)
-    posts = await Post.find(search_criteria)\
-        .aggregate([
-            {   '$sort': { 'created_at': -1 }},
+    search_criteria = await generate_search_criteria(post_request_params) 
+    aggregations = []
+    if post_request_params.count < 100:
+        aggregations.append({   '$sort': { 'created_at': -1 }})
+    aggregations += [
             {
                 '$skip': post_request_params.start_index
             },
@@ -225,7 +226,9 @@ async def get_posts(post_request_params: RequestPostsFilters):
                     'as': "account"
                 }
             },
-        ])\
+        ]
+    posts = await Post.find(search_criteria)\
+        .aggregate(aggregations)\
         .to_list()
 
     
