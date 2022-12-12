@@ -160,6 +160,7 @@ async def posts(request: Request, post_request_params: RequestPostsFilters, curr
 @app.post("/download_posts", response_description="Get csv file of posts")
 async def download_posts(request: Request, post_request_params:RequestPostsFilters):
     await mongo([Post, CollectTask, SearchTerm, CollectAction], request)
+    post_request_params.count = 9999999
     posts = await get_posts(post_request_params)
     
     for post in posts:
