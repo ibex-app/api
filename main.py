@@ -633,7 +633,7 @@ async def recommendations(request: Request, monitor_id: RequestId, current_email
 @app.post("/save_and_next", response_description="Save the annotations for the text and return new text for annotation", response_model=TextForAnnotation)
 async def save_and_next(request: Request, request_annotations: RequestAnnotations, current_email: str = Depends(get_current_user_email)) -> TextForAnnotation:
     await mongo([Annotations, TextForAnnotation], request)
-    
+    return TextForAnnotation(id=uuid1(), words=[])
     if request_annotations.text_id:
         annotations = Annotations(text_id = request_annotations.text_id, user_mail = current_email, annotations = request_annotations.annotations)
         # print('inserting annotation', annotations)
@@ -644,7 +644,10 @@ async def save_and_next(request: Request, request_annotations: RequestAnnotation
     ]).to_list()
     
     annotated_text_ids = [annotations["text_id"]  for annotations in already_annotated]
-
+    
+    if len(annotated_text_ids) > 125:
+        return TextForAnnotation(id=uuid1(), words=[])
+        
     text_for_annotation = await TextForAnnotation.aggregate([
         {"$match": { "_id": { "$nin": annotated_text_ids }}},
         {
