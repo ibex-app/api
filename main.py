@@ -651,7 +651,7 @@ async def save_and_next(request: Request, request_annotations: RequestAnnotation
     ).count()
 
     annotated_today
-    if annotated_today > 7:
+    if annotated_today > 120:
         return TextForAnnotation(id=uuid1(), words=[])
 
     already_annotated = await Annotations.aggregate([
