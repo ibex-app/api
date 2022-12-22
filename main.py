@@ -9,7 +9,7 @@ from uuid import UUID, uuid1
 from typing import List
 from beanie.odm.operators.find.comparison import In
 import numbers
-
+from datetime import datetime, timedelta
 from bson.json_util import dumps, loads
 
 import pandas as pd
@@ -633,11 +633,26 @@ async def recommendations(request: Request, monitor_id: RequestId, current_email
 @app.post("/save_and_next", response_description="Save the annotations for the text and return new text for annotation", response_model=TextForAnnotation)
 async def save_and_next(request: Request, request_annotations: RequestAnnotations, current_email: str = Depends(get_current_user_email)) -> TextForAnnotation:
     await mongo([Annotations, TextForAnnotation], request)
-    return TextForAnnotation(id=uuid1(), words=[])
+
     if request_annotations.text_id:
-        annotations = Annotations(text_id = request_annotations.text_id, user_mail = current_email, annotations = request_annotations.annotations)
+        annotations = Annotations(  text_id = request_annotations.text_id, 
+                                    user_mail = current_email, 
+                                    created_at = datetime.now(),
+                                    annotations = request_annotations.annotations)
         # print('inserting annotation', annotations)
         await annotations.insert()
+    current_email = 'djanezashvili@gmail.com'
+    now = datetime.now() + timedelta(hours=4)
+    date_from = datetime(2022, 12, now.day - 1, 20)
+    date_to = datetime(2022, 12, now.day, 20)
+    annotated_today = await Annotations.find(
+        Annotations.user_mail == current_email,
+        Annotations.created_at > date_from, Annotations.created_at < date_to
+    ).count()
+
+    annotated_today
+    if annotated_today > 7:
+        return TextForAnnotation(id=uuid1(), words=[])
 
     already_annotated = await Annotations.aggregate([
         {"$match": { "user_mail": { "$eq": current_email }}}
@@ -645,8 +660,6 @@ async def save_and_next(request: Request, request_annotations: RequestAnnotation
     
     annotated_text_ids = [annotations["text_id"]  for annotations in already_annotated]
     
-    if len(annotated_text_ids) > 125:
-        return TextForAnnotation(id=uuid1(), words=[])
         
     text_for_annotation = await TextForAnnotation.aggregate([
         {"$match": { "_id": { "$nin": annotated_text_ids }}},
