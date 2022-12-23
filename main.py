@@ -654,44 +654,26 @@ async def save_and_next(request: Request, request_annotations: RequestAnnotation
     if annotated_today > 120:
         return TextForAnnotation(id=uuid1(), words=[])
 
-    already_annotated = await Annotations.aggregate([
-        {"$match": { "user_mail": { "$eq": current_email }}}
+    user_annotated = await Annotations.aggregate([
+        {"$match": { "user_mail": { "$eq": current_email }}},
+        {"$project": { "annotations": 0  }}
     ]).to_list()
-    
-    annotated_text_ids = [annotations["text_id"]  for annotations in already_annotated]
-    
-        
+
+    fully_annotated = await Annotations.aggregate([
+            {"$group" : 
+                {
+                    "_id": "$text_id",        
+                    'count': { '$count': { }},
+                }
+            },
+            {"$match": { "count": { "$gt": 3 } } }
+        ]).to_list()
+
+    annotated_text_ids = [annotations["text_id"]  for annotations in user_annotated] + [annotations["_id"]  for annotations in fully_annotated]
+
     text_for_annotation = await TextForAnnotation.aggregate([
         {"$match": { "_id": { "$nin": annotated_text_ids }}},
-        {
-            "$lookup":
-                {
-                    "from": "annotations",
-                    "localField": "_id",
-                    "foreignField": "text_id",
-                    "as": "annotations_"
-                }
-        }, 
-        {
-            "$project":
-            {
-                "annotations_": { "$cond" : [ { "$eq" : [ "$annotations_", [] ] }, [ { "tag_id": 0, "label": "", "words": [], "labelGrup": ""} ], '$annotations_' ] }
-            }
-        },
-        {"$unwind": "$annotations_"},
-        {"$group" : {"_id":"$_id", "count":{"$sum":1}}},
-        {"$match": { "count": { "$lt": 4 }}},
         {"$sample": {"size": 1}},
-        {
-            "$lookup":
-                {
-                    "from": "text_for_annotation",
-                    "localField": "_id",
-                    "foreignField": "_id",
-                    "as": "text"
-                }
-        },
-        {"$unwind": "$text"},
     ]).to_list()
     
     # print(len(text_for_annotation))
@@ -699,7 +681,7 @@ async def save_and_next(request: Request, request_annotations: RequestAnnotation
     if len(text_for_annotation) == 0:
         return TextForAnnotation(id=uuid1(), words=[])
     
-    text_for_annotation = TextForAnnotation(id=text_for_annotation[0]["_id"], post_id = text_for_annotation[0]["text"]["post_id"], words=text_for_annotation[0]["text"]["words"])
+    text_for_annotation = TextForAnnotation(id=text_for_annotation[0]["_id"], post_id = text_for_annotation[0]["post_id"], words=text_for_annotation[0]["words"])
     return text_for_annotation
 
 
