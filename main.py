@@ -641,7 +641,7 @@ async def save_and_next(request: Request, request_annotations: RequestAnnotation
                                     annotations = request_annotations.annotations)
         # print('inserting annotation', annotations)
         await annotations.insert()
-    current_email = 'djanezashvili@gmail.com'
+
     now = datetime.now() + timedelta(hours=4)
     date_from = datetime(2022, 12, now.day - 1, 20)
     date_to = datetime(2022, 12, now.day, 20)
