@@ -652,7 +652,7 @@ async def save_and_next(request: Request, request_annotations: RequestAnnotation
 
     annotated_today
     if annotated_today > 120:
-        return TextForAnnotation(id=uuid1(), words=[])
+        return TextForAnnotation(id=uuid1(), words=['თქვენ დაასრულეთ დღევანდელი 120 მაგალითის ანოტაცია'])
 
     user_annotated = await Annotations.aggregate([
         {"$match": { "user_mail": { "$eq": current_email }}},
@@ -679,7 +679,7 @@ async def save_and_next(request: Request, request_annotations: RequestAnnotation
     # print(len(text_for_annotation))
     # print(text_for_annotation)
     if len(text_for_annotation) == 0:
-        return TextForAnnotation(id=uuid1(), words=[])
+        return TextForAnnotation(id=uuid1(), words=[''])
     
     text_for_annotation = TextForAnnotation(id=text_for_annotation[0]["_id"], post_id = text_for_annotation[0]["post_id"], words=text_for_annotation[0]["words"])
     return text_for_annotation
