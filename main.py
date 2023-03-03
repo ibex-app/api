@@ -643,8 +643,8 @@ async def save_and_next(request: Request, request_annotations: RequestAnnotation
         await annotations.insert()
 
     now = datetime.now() + timedelta(hours=4)
-    date_from = datetime(2022, 12, now.day - 1, 20)
-    date_to = datetime(2022, 12, now.day, 20)
+    date_from = datetime(now.year, now.month, now.day - 1, 20)
+    date_to = datetime(now.year, now.month, now.day, 20)
     annotated_today_ = await Annotations.find(
         Annotations.user_mail == current_email,
         Annotations.created_at > date_from, Annotations.created_at < date_to
