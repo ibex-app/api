@@ -645,13 +645,13 @@ async def save_and_next(request: Request, request_annotations: RequestAnnotation
     now = datetime.now() + timedelta(hours=4)
     date_from = datetime(2022, 12, now.day - 1, 20)
     date_to = datetime(2022, 12, now.day, 20)
-    annotated_today = await Annotations.find(
+    annotated_today_ = await Annotations.find(
         Annotations.user_mail == current_email,
         Annotations.created_at > date_from, Annotations.created_at < date_to
     ).count()
 
-    annotated_today
-    if annotated_today > 201:
+    annotated_today_
+    if annotated_today_ > 201:
         return TextForAnnotation(id=uuid1(), words=['თქვენ დაასრულეთ დღევანდელი 200 მაგალითის ანოტაცია'])
 
     user_annotated = await Annotations.aggregate([
@@ -680,8 +680,11 @@ async def save_and_next(request: Request, request_annotations: RequestAnnotation
     # print(text_for_annotation)
     if len(text_for_annotation) == 0:
         return TextForAnnotation(id=uuid1(), words=[''])
-    
-    text_for_annotation = TextForAnnotation(id=text_for_annotation[0]["_id"], post_id = text_for_annotation[0]["post_id"], words=text_for_annotation[0]["words"], annotated_today=annotated_today)
+    print('annotated_today_', annotated_today_)
+    text_for_annotation = TextForAnnotation(id=text_for_annotation[0]["_id"], 
+                                            post_id = text_for_annotation[0]["post_id"], 
+                                            words=text_for_annotation[0]["words"], 
+                                            annotated_today=annotated_today_)
     return text_for_annotation
 
 
