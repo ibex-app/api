@@ -681,7 +681,7 @@ async def save_and_next(request: Request, request_annotations: RequestAnnotation
     if len(text_for_annotation) == 0:
         return TextForAnnotation(id=uuid1(), words=[''])
     
-    text_for_annotation = TextForAnnotation(id=text_for_annotation[0]["_id"], post_id = text_for_annotation[0]["post_id"], words=text_for_annotation[0]["words"])
+    text_for_annotation = TextForAnnotation(id=text_for_annotation[0]["_id"], post_id = text_for_annotation[0]["post_id"], words=text_for_annotation[0]["words"], annotated_today=annotated_today)
     return text_for_annotation
 
 
