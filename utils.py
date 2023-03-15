@@ -114,7 +114,9 @@ async def generate_search_criteria(post_request_params: RequestPostsFilters):
     return search_criteria
 
 def get_subdomain(request):
-    return request.url._url.split('.ibex-app.com')[0].split('//')[1]
+    subdomain = request.url._url.split('.ibex-app.com')[0].split('//')[1]
+    print(f'SUB_DOMAIN: {subdomain}')
+    return subdomain
 
 def get_mongo_cs(request):
     mongodb_connection_string = os.getenv(f'MONGO_CS')
